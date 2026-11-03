@@ -120,6 +120,14 @@ body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; overflow: 
   box-shadow: 0 6px 24px rgba(10, 20, 40, .35);
 }
 
+/* ---------- chế độ boss nền tối sâu: panel thành kính tối tím ----------
+   (chỉ áp khi #stage có .boss-dark — setStageMode gắn theo chế độ boss;
+   chế độ chạy giữ nguyên diện mạo cũ) */
+#stage.boss-dark .panel {
+  background: rgba(8, 6, 24, .72);
+  border: 1px solid rgba(150, 130, 255, .25);
+}
+
 /* ---------- panel thống kê: góc trái ---------- */
 #statsPanel { top: 15vh; left: 2.5vw; width: 29%; font-size: 1.5vh; }
 .stat-row { margin: .24vh 0; white-space: nowrap; }

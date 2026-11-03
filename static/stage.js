@@ -186,6 +186,8 @@ function setStageMode(mode) {
   if (mode !== "run" && mode !== "boss") return;
   stageMode = mode;
   $("stage").classList.toggle("boss-mode", mode === "boss");
+  // nền boss tối sâu -> panel chuyển kính tối cho khỏi "nổi" lạc tông (chỉ boss)
+  $("stage").classList.toggle("boss-dark", mode === "boss");
 }
 
 function updateBoss(b) {
@@ -521,12 +523,56 @@ const BOSS_ART_EYES = {
 };
 let lastBossSkin = null; // Tàn Ảnh của snapshot trước — đổi khác là chớp sáng chuyển hình
 
-/* ---- Đấu trường tối huyền bí (chỉ khi có ảnh Tàn Ảnh): nền chàm sâu,
-   hào quang tím sau lưng boss, sương trôi, hạt sáng bay lên, vòng ma thuật. ---- */
+/* ---- Cột sáng trung tâm sau lưng boss (yếu tố chính của nền v2): chùm sáng
+   xanh-tím nhạt rủ từ trên xuống vòng ma thuật, mép mềm cả ngang lẫn dọc.
+   Vẽ 1 lần vào canvas đệm (đắt vì 2 lớp gradient chéo nhau), mỗi khung chỉ
+   drawImage lại với alpha nhấp nháy rất nhẹ cho cảm giác "sống". ---- */
+let pillarCache = null; // {w, h, canvas}
+function getPillarCanvas(W, H) {
+  if (pillarCache && pillarCache.w === W && pillarCache.h === H) return pillarCache.canvas;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const cx = W * 0.5;
+  const bottom = H * 0.085 + W * 0.94 + H * 0.03; // chạm tới vòng ma thuật dưới chân boss
+  const layers = [
+    { w: W * 0.80, col: "130, 145, 255", a: 0.16 },  // chùm ngoài: rộng hơn khung thân boss mới lộ 2 bên vai
+    { w: W * 0.30, col: "196, 206, 255", a: 0.20 },  // lõi trong sáng hơn
+  ];
+  for (const L of layers) {
+    const x0 = cx - L.w / 2;
+    const hg = g.createLinearGradient(x0, 0, x0 + L.w, 0);
+    hg.addColorStop(0, `rgba(${L.col}, 0)`);
+    hg.addColorStop(0.5, `rgba(${L.col}, ${L.a})`);
+    hg.addColorStop(1, `rgba(${L.col}, 0)`);
+    g.fillStyle = hg;
+    g.fillRect(x0, 0, L.w, bottom);
+  }
+  // tan dần xuống dưới bằng destination-out (chỉ xén alpha, không sơn màu nền)
+  g.globalCompositeOperation = "destination-out";
+  const vg = g.createLinearGradient(0, 0, 0, bottom);
+  vg.addColorStop(0, "rgba(0, 0, 0, 0)");
+  vg.addColorStop(0.55, "rgba(0, 0, 0, 0)");
+  vg.addColorStop(1, "rgba(0, 0, 0, 1)");
+  g.fillStyle = vg;
+  g.fillRect(0, 0, W, bottom);
+  g.globalCompositeOperation = "source-over";
+  pillarCache = { w: W, h: H, canvas: c };
+  return c;
+}
+
+/* ---- Đấu trường tối huyền bí v2 (chỉ khi có ảnh Tàn Ảnh): nền gần đen,
+   cột sáng trung tâm + hào quang sau lưng boss làm boss nổi bật, sương và
+   hạt sáng tiết chế, tối góc (vignette), vòng ma thuật. ---- */
 function drawBossArena(now, W, H, cx) {
   const bg = ctx2d.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, "#070418"); bg.addColorStop(0.5, "#170b33"); bg.addColorStop(1, "#030208");
+  bg.addColorStop(0, "#030110"); bg.addColorStop(0.45, "#0d0733"); bg.addColorStop(1, "#020108");
   ctx2d.fillStyle = bg; ctx2d.fillRect(0, 0, W, H);
+  // cột sáng trung tâm sau lưng boss (nhấp nháy alpha rất nhẹ)
+  ctx2d.save();
+  ctx2d.globalAlpha = 0.93 + 0.07 * Math.sin(now / 2600);
+  ctx2d.drawImage(getPillarCanvas(W, H), 0, 0);
+  ctx2d.restore();
   // hào quang tím mềm sau lưng boss
   const glow = ctx2d.createRadialGradient(cx, H * 0.34, H * 0.05, cx, H * 0.34, H * 0.46);
   glow.addColorStop(0, "rgba(124, 77, 255, .34)");
@@ -539,7 +585,7 @@ function drawBossArena(now, W, H, cx) {
     const mx = cx + Math.sin(now / (5200 + i * 900) + i * 1.9) * W * 0.30 + (i - 2.5) * W * 0.09;
     const mr = W * (0.30 + (i % 3) * 0.07);
     const mist = ctx2d.createRadialGradient(mx, my, 0, mx, my, mr);
-    mist.addColorStop(0, "rgba(196, 178, 255, .075)");
+    mist.addColorStop(0, "rgba(196, 178, 255, .052)");
     mist.addColorStop(1, "rgba(196, 178, 255, 0)");
     ctx2d.save();
     ctx2d.translate(mx, my); ctx2d.scale(1, 0.32); ctx2d.translate(-mx, -my);
@@ -547,15 +593,21 @@ function drawBossArena(now, W, H, cx) {
     ctx2d.beginPath(); ctx2d.arc(mx, my, mr, 0, Math.PI * 2); ctx2d.fill();
     ctx2d.restore();
   }
-  // hạt sáng tím/vàng lác đác bay lên
-  for (let i = 0; i < 26; i++) {
+  // hạt sáng tím/vàng thưa, mờ — bay lên chậm
+  for (let i = 0; i < 16; i++) {
     const speed = 0.014 + (i % 4) * 0.004;
     const px = (i * 379.7) % W;
     const py = H - ((now * speed + i * 173.3) % (H * 0.92)) - H * 0.03;
     const tw = 0.35 + 0.65 * Math.abs(Math.sin(now / 700 + i * 2.3));
-    ctx2d.fillStyle = i % 3 === 0 ? `rgba(255, 205, 96, ${0.5 * tw})` : `rgba(178, 148, 255, ${0.55 * tw})`;
+    ctx2d.fillStyle = i % 3 === 0 ? `rgba(255, 205, 96, ${0.34 * tw})` : `rgba(178, 148, 255, ${0.38 * tw})`;
     ctx2d.beginPath(); ctx2d.arc(px, py, i % 3 === 0 ? 2.4 : 1.8, 0, Math.PI * 2); ctx2d.fill();
   }
+  // tối góc: giữa khung trong suốt -> mép chìm vào đen (vẽ trên nền, dưới boss/mèo)
+  const vig = ctx2d.createRadialGradient(cx, H * 0.46, H * 0.28, cx, H * 0.46, H * 0.74);
+  vig.addColorStop(0, "rgba(0, 0, 0, 0)");
+  vig.addColorStop(0.62, "rgba(0, 0, 0, .14)");
+  vig.addColorStop(1, "rgba(0, 0, 0, .55)");
+  ctx2d.fillStyle = vig; ctx2d.fillRect(0, 0, W, H);
 }
 
 /* ---- Vòng ma thuật dưới chân boss: vẽ SAU ảnh để quầng mép ảnh không che mất.
@@ -564,6 +616,11 @@ function drawMagicCircle(now, W, H, cx, baseY) {
   const rx = W * 0.335, ry = rx * 0.30;
   ctx2d.save();
   ctx2d.translate(cx, baseY);
+  // quầng sáng sàn rộng và rất mờ loang ra dưới vòng
+  const floor = ctx2d.createRadialGradient(0, 0, 0, 0, 0, rx * 1.45);
+  floor.addColorStop(0, "rgba(120, 100, 255, .13)"); floor.addColorStop(1, "rgba(120, 100, 255, 0)");
+  ctx2d.fillStyle = floor;
+  ctx2d.beginPath(); ctx2d.ellipse(0, 0, rx * 1.45, ry * 1.45, 0, 0, Math.PI * 2); ctx2d.fill();
   const under = ctx2d.createRadialGradient(0, 0, 0, 0, 0, rx);
   under.addColorStop(0, "rgba(140, 95, 255, .28)"); under.addColorStop(1, "rgba(140, 95, 255, 0)");
   ctx2d.fillStyle = under;
@@ -586,6 +643,8 @@ function drawMagicCircle(now, W, H, cx, baseY) {
 
 /* ---- 2 sợi xích vàng từ 2 góc trên chéo xuống sau vai boss ---- */
 function drawBossChains(W, H) {
+  ctx2d.save();
+  ctx2d.globalAlpha = 0.9; // xích hơi chìm vào nền tối, không tranh sáng với boss
   const runs = [
     { x0: -W * 0.01, y0: -H * 0.005, x1: W * 0.315, y1: H * 0.315 },
     { x0: W * 1.01, y0: -H * 0.005, x1: W * 0.685, y1: H * 0.315 },
@@ -607,6 +666,7 @@ function drawBossChains(W, H) {
       ctx2d.restore();
     }
   }
+  ctx2d.restore();
 }
 
 /* ---- Vẽ ảnh Tàn Ảnh + làm mờ 4 mép hoà vào nền đấu trường (không lộ cạnh vuông) ---- */
@@ -615,16 +675,16 @@ function drawBossArt(img, x, y, size) {
   let g;
   const fyT = size * 0.15, fyB = size * 0.24, fx = size * 0.13;
   g = ctx2d.createLinearGradient(0, y, 0, y + fyT);
-  g.addColorStop(0, "rgba(10, 5, 24, .96)"); g.addColorStop(1, "rgba(10, 5, 24, 0)");
+  g.addColorStop(0, "rgba(4, 2, 18, .96)"); g.addColorStop(1, "rgba(4, 2, 18, 0)");
   ctx2d.fillStyle = g; ctx2d.fillRect(x, y, size, fyT);
   g = ctx2d.createLinearGradient(0, y + size - fyB, 0, y + size);
-  g.addColorStop(0, "rgba(6, 3, 16, 0)"); g.addColorStop(1, "rgba(6, 3, 16, .97)");
+  g.addColorStop(0, "rgba(2, 1, 8, 0)"); g.addColorStop(1, "rgba(2, 1, 8, .97)");
   ctx2d.fillStyle = g; ctx2d.fillRect(x, y + size - fyB, size, fyB);
   g = ctx2d.createLinearGradient(x, 0, x + fx, 0);
-  g.addColorStop(0, "rgba(9, 5, 22, .94)"); g.addColorStop(1, "rgba(9, 5, 22, 0)");
+  g.addColorStop(0, "rgba(5, 3, 20, .94)"); g.addColorStop(1, "rgba(5, 3, 20, 0)");
   ctx2d.fillStyle = g; ctx2d.fillRect(x, y, fx, size);
   g = ctx2d.createLinearGradient(x + size - fx, 0, x + size, 0);
-  g.addColorStop(0, "rgba(9, 5, 22, 0)"); g.addColorStop(1, "rgba(9, 5, 22, .94)");
+  g.addColorStop(0, "rgba(5, 3, 20, 0)"); g.addColorStop(1, "rgba(5, 3, 20, .94)");
   ctx2d.fillStyle = g; ctx2d.fillRect(x + size - fx, y, fx, size);
 }
 
@@ -660,6 +720,14 @@ function drawBossScene(now, W, H, dt) {
     ctx2d.translate(bossX, bossY);
     if (!b.alive) { ctx2d.globalAlpha = 0.5; ctx2d.rotate(0.16); }
     else if (formStage >= 2) ctx2d.rotate(0.02);
+    // quầng sáng (halo) tím-trắng nhạt ôm sau lưng ảnh: tách boss khỏi nền tối
+    const haloR = artSize * 0.62;
+    const halo = ctx2d.createRadialGradient(0, 0, 0, 0, 0, haloR);
+    halo.addColorStop(0, "rgba(208, 202, 255, .24)");
+    halo.addColorStop(0.55, "rgba(182, 172, 255, .10)");
+    halo.addColorStop(1, "rgba(182, 172, 255, 0)");
+    ctx2d.fillStyle = halo;
+    ctx2d.fillRect(-haloR, -haloR, haloR * 2, haloR * 2);
     drawBossArt(artImg, -bossR, -bossR, artSize);
     // mốc 3: vết nứt vỏ chạy ngang thân boss (vẽ đè lên ảnh)
     if (formStage === 3 && b.alive) {
