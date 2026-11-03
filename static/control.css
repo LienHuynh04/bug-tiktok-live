@@ -1,0 +1,38 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: "Segoe UI", system-ui, sans-serif; background: #17102a; color: #fff; padding: 24px; }
+header { max-width: 1100px; margin: 0 auto 18px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+header h1 { font-size: 24px; }
+.status { padding: 6px 14px; border-radius: 99px; font-size: 14px; background: #4a2c35; }
+.status.on { background: #1f4d33; }
+main { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.card { background: rgba(255,255,255,.06); border-radius: 16px; padding: 18px; }
+.card h2 { font-size: 17px; margin-bottom: 12px; }
+label { display: block; font-size: 14px; opacity: .95; margin-bottom: 10px; }
+input {
+  display: block; width: 100%; margin-top: 5px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.3); color: #fff; font-size: 15px;
+}
+button {
+  background: rgba(255,255,255,.12); color: #fff; border: 0; border-radius: 10px;
+  padding: 10px 14px; font-size: 14px; cursor: pointer; margin: 4px 4px 4px 0;
+}
+button:hover { background: rgba(255,255,255,.22); }
+button.primary { background: #ffb84d; color: #241743; font-weight: 700; }
+.row { display: flex; flex-wrap: wrap; }
+.hint { font-size: 13px; opacity: .75; margin-top: 10px; line-height: 1.5; }
+code { background: rgba(0,0,0,.4); padding: 2px 6px; border-radius: 6px; }
+.preview iframe { width: 100%; aspect-ratio: 9/16; max-height: 520px; border: 0; border-radius: 12px; background: #000; }
+.card.wide { grid-column: 1 / -1; }
+#voiceTable { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 14px; }
+#voiceTable th, #voiceTable td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(255,255,255,.12); vertical-align: top; }
+#voiceTable tr.current td { background: rgba(255,184,77,.13); }
+#voiceTable .badge { color: #ffd88a; font-weight: 700; }
+#voiceTable small { opacity: .75; display: block; margin-top: 3px; line-height: 1.45; }
+select {
+  display: block; margin-top: 5px; padding: 9px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.3); color: #fff; font-size: 15px;
+}
+label.check { display: flex; align-items: center; gap: 8px; }
+label.check input { width: auto; margin: 0; }
+#log { font-size: 13px; max-height: 300px; overflow-y: auto; line-height: 1.7; opacity: .9; }
+#log div { border-bottom: 1px solid rgba(255,255,255,.06); padding: 2px 0; }

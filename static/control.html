@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nhà của Bug — Trang điều khiển</title>
+<link rel="stylesheet" href="/static/control.css">
+</head>
+<body>
+<header>
+  <h1>🐱 Nhà của Bug — Trang điều khiển</h1>
+  <p id="status" class="status off">Chưa kết nối TikTok</p>
+  <p id="appVersion" style="font-size:.8rem;opacity:.65">Phiên bản app: …</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. Cài đặt kênh</h2>
+    <label>Tên kênh (giọng đọc sẽ xưng tên này)
+      <input id="channelName" type="text" placeholder="IT có con mèo tên Bug">
+    </label>
+    <label>Mục tiêu tim để mưa cá
+      <input id="likeGoal" type="number" min="50" step="50">
+    </label>
+    <label>Thời gian mưa cá (giây)
+      <input id="rainSeconds" type="number" min="5" max="120" step="5">
+    </label>
+    <label>Chế độ sân khấu</label>
+    <div class="row">
+      <button id="modeRun">🏃 Chạy cùng Bug</button>
+      <button id="modeBoss">🐭 Đánh Boss</button>
+    </div>
+    <label>Máu boss (vòng 1)
+      <input id="bossMaxHp" type="number" min="100" max="100000" step="100">
+    </label>
+    <label class="check"><input id="bossTaunts" type="checkbox" checked> Boss chửi lại (Răng Sắt buông thoại châm chọc khi bị đánh đau / dội mưa cá / gọi đoàn trợ trận)</label>
+    <p class="hint">Chế độ <b>Đánh Boss</b>: cả phòng gõ <b>CÀO</b> để tấn công Chuột Trùm Răng Sắt (5 mèo cùng cào trong 3 giây = <b>Đòn đồng loạt x2</b>), thả tim nạp thanh Nộ (đầy = mưa cá trút xuống boss), boss gục thì 15 giây sau hồi sinh với máu +20% mỗi vòng.</p>
+    <button id="saveConfig">💾 Lưu cài đặt</button>
+  </section>
+
+  <section class="card">
+    <h2>2. Kết nối TikTok LIVE</h2>
+    <label>Username TikTok của bạn (không cần @)
+      <input id="username" type="text" placeholder="vd: tenkenhcuaban">
+    </label>
+    <div class="row">
+      <button id="connectBtn" class="primary">🔌 Kết nối</button>
+      <button id="disconnectBtn">Ngắt kết nối</button>
+    </div>
+    <div class="row">
+      <button id="demoStart">▶️ Chạy DEMO (người xem giả)</button>
+      <button id="demoStop">⏹️ Tắt DEMO</button>
+    </div>
+    <p class="hint">Phải <b>đang LIVE</b> thì mới kết nối được. Chưa live thì cứ dùng DEMO để xem thử sân khấu.</p>
+  </section>
+
+  <section class="card wide">
+    <h2>3. Bảng giọng thật (Edge TTS) &amp; tiếng mèo kêu</h2>
+    <div class="row" id="presetRow">
+      <button data-preset="de-thuong">🌸 Dễ thương (đang mặc định)</button>
+      <button data-preset="am-ap">💛 Ấm áp</button>
+      <button data-preset="nang-luong">⚡ Năng lượng</button>
+    </div>
+    <p class="hint" id="pitchInfo"></p>
+    <div class="row" style="align-items:center;gap:10px">
+      <span>🎙️ <b>Giọng mẫu của bạn</b> — lời chào mở màn khi kết nối live (phát nguyên bản ghi âm):</span>
+      <audio controls src="/static/voice/chao-mung.mp3" style="height:34px"></audio>
+    </div>
+    <table id="voiceTable">
+      <thead><tr><th>Giọng</th><th>Kiểu</th><th>Nghe thử</th><th>Chọn</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <label>Tốc độ đọc
+      <select id="ttsRate">
+        <option value="-10">Chậm (-10%)</option>
+        <option value="0" selected>Bình thường</option>
+        <option value="5">Hơi nhanh (+5%)</option>
+        <option value="10">Nhanh (+10%)</option>
+        <option value="20">Rất nhanh (+20%)</option>
+      </select>
+    </label>
+    <label class="check"><input id="meowEnabled" type="checkbox" checked> Bật tiếng mèo kêu (khi có mèo mới, cho ăn, đua, thắng…)</label>
+    <div class="row">
+      <button id="meowTest">🐱 Nghe thử tiếng mèo</button>
+      <button id="engineToggle">Đổi máy đọc: Edge / Trình duyệt</button>
+      <button id="vbeeEngineBtn">🎙️ Dùng máy đọc Vbee (giọng Việt 3 miền)</button>
+    </div>
+    <div id="vbeePanel" style="display:none;border:1px dashed #b08900;border-radius:10px;padding:10px;margin:8px 0">
+      <h3 style="margin:0 0 6px">🎙️ Vbee — giọng nữ miền Nam</h3>
+      <label>App ID Vbee
+        <input id="vbeeAppId" type="text" placeholder="App ID trong trang quản lý API của Vbee" autocomplete="off">
+      </label>
+      <label>Access Token Vbee
+        <input id="vbeeToken" type="password" placeholder="Dán Access Token từ Vbee" autocomplete="off">
+      </label>
+      <label>Giọng Vbee
+        <select id="vbeeVoice">
+          <option value="sg_female_thaotrinh_48k-fhg">Thảo Trinh — Nữ miền Nam (mã đã xác thực)</option>
+          <option value="sg_female_lanhuong_48k-fhg">Lan Hương — Nữ miền Nam (mã đã xác thực)</option>
+          <option value="sg_female_mylinh_48k-fhg">Mỹ Linh — Nữ miền Nam (mã CHƯA xác thực)</option>
+        </select>
+      </label>
+      <label>Mã giọng khác (điền vào đây sẽ ghi đè ô chọn ở trên)
+        <input id="vbeeVoiceCustom" type="text" placeholder="vd: sg_female_mylinh_48k-fhg" autocomplete="off">
+      </label>
+      <div class="row">
+        <button id="vbeeSave">💾 Lưu Vbee &amp; dùng giọng này</button>
+        <button id="vbeeLoadVoices">📥 Lấy danh sách giọng thật từ Vbee</button>
+        <button id="vbeePreview">🔊 Nghe thử giọng Vbee</button>
+      </div>
+      <p class="hint">Mã giọng <b>Mỹ Linh hiện CHƯA được xác thực</b> (suy theo mẫu đặt tên của Vbee) — sau khi nhập Token, bấm <b>"Lấy danh sách giọng thật từ Vbee"</b> để chọn đúng mã thật của tài khoản. App ID + Token chỉ lưu trong config.json trên máy này, không gửi đi đâu ngoài Vbee. Vbee tính phí theo ký tự; câu đã đọc được lưu cache nên không tốn lại.</p>
+    </div>
+    <p class="hint">Giọng thật cần <b>internet</b> (giọng do máy chủ Microsoft tạo). Mất mạng thì sân khấu tự lùi về giọng máy của trình duyệt. Tiếng mèo là âm tổng hợp trong trình duyệt, <b>không cần file, không cần mạng</b>.</p>
+  </section>
+
+  <section class="card">
+    <h2>4. Giọng đọc &amp; điều khiển nhanh</h2>
+    <label>Câu muốn đọc ngay trên live
+      <input id="speakText" type="text" placeholder="vd: Cả nhà gõ đua để đua mèo nha!">
+    </label>
+    <button id="speakBtn" class="primary">🔊 Đọc ngay</button>
+    <div class="row">
+      <button data-action="race_start">🏁 Bắt đầu đua ngay</button>
+      <button data-action="rain">🌧️🐟 Mưa cá</button>
+    </div>
+    <div class="row">
+      <button data-action="reset_likes">↩️ Reset đếm tim</button>
+      <button data-action="reset_scores">🗑️ Reset điểm TOP</button>
+    </div>
+    <p class="hint">Giọng đọc phát ở <b>trang sân khấu</b> — nhớ bấm nút "Bật giọng đọc" trên sân khấu 1 lần.</p>
+  </section>
+
+  <section class="card preview">
+    <h2>5. Xem trước sân khấu</h2>
+    <iframe id="stagePreview" src="/stage" title="Sân khấu"></iframe>
+    <p class="hint">Đưa vào TikTok LIVE Studio: Thêm nguồn → Link →
+      <code>http://lvh.me:3000/stage</code> (hoặc <code>http://localhost:3000/stage</code>), kích thước <b>1080 × 1920</b>.</p>
+  </section>
+
+  <section class="card">
+    <h2>Nhật ký sự kiện</h2>
+    <div id="log"></div>
+  </section>
+</main>
+<script src="/static/control.js"></script>
+</body>
+</html>

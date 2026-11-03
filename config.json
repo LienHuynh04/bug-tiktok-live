@@ -1,0 +1,17 @@
+{
+  "channel_name": "IT có con mèo tên Bug",
+  "tiktok_username": "",
+  "like_goal": 500,
+  "rain_seconds": 30,
+  "tts_engine": "edge",
+  "tts_voice": "vi-VN-HoaiMyNeural",
+  "tts_rate": 5,
+  "tts_pitch": 35,
+  "meow_enabled": true,
+  "vbee_app_id": "",
+  "vbee_token": "",
+  "vbee_voice": "sg_female_thaotrinh_48k-fhg",
+  "stage_mode": "run",
+  "boss_max_hp": 1000,
+  "boss_taunts": true
+}

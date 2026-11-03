@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nhà của Bug — Sân khấu LIVE v3</title>
+<link rel="stylesheet" href="/static/stage.css">
+</head>
+<body>
+<div id="stage">
+  <canvas id="world"></canvas>
+
+  <header id="titleBar">
+    <p id="titleRun">💬 Bình luận để vào đội • Mỗi người là một bé mèo • ❤️ Đủ <span id="likeGoalText">500</span> tim → mưa cá</p>
+    <p id="titleBoss">🐭 ĐÁNH BOSS • Gõ CÀO để tấn công • ❤️ Thả tim nạp Nộ → mưa cá trút xuống boss</p>
+  </header>
+
+  <aside id="statsPanel" class="panel">
+    <div class="stat-row">⭐ <span id="statStars">0</span></div>
+    <div class="stat-row">❤️ <span id="statLikes">0</span></div>
+    <div class="stat-row">🔔 <span id="statFollows">0</span> follow</div>
+    <div class="stat-row run-only">🐱 Đội chạy: <span id="statTeam">0</span> bé</div>
+    <div class="stat-row run-only">🏃 <span id="statKm">0.00</span> km</div>
+    <div class="stat-row boss-only">🐭 Boss vòng: <span id="statBossRound">1</span></div>
+    <div class="stat-row boss-only">⚔️ Tổng sát thương: <span id="statBossDmg">0</span></div>
+    <div class="stat-row">⏱️ <span id="statTime">00:00</span></div>
+    <ul id="eventLog"></ul>
+    <div class="like-box run-only">
+      <div class="like-label">❤️ <span id="likeText">0 / 500</span> → 🌧️🐟</div>
+      <div class="like-bar"><div id="likeFill"></div></div>
+    </div>
+  </aside>
+
+  <div id="bugBar" class="panel">
+    <div id="bugFace">🐱</div>
+    <div class="bug-info">
+      <div class="bug-title">Bug <span id="bugMood">đang vui vẻ</span></div>
+      <div class="satiety-bar"><div id="satietyFill"></div></div>
+      <div class="bug-sub" id="bugSub">Độ no của Bug — gõ HẠT để cho ăn</div>
+    </div>
+  </div>
+
+  <section id="menuBoard" class="panel">
+    <h2>🐱 CHẠY CÙNG BUG</h2>
+    <ul>
+      <li>🏃 <b>"chạy"</b>: vào đội chạy</li>
+      <li>⚡ <b>"chạy nhanh"</b>: tăng tốc 20s</li>
+      <li>😴 <b>"nghỉ"</b>: chậm lại</li>
+      <li>🦘 <b>"nhảy"</b>: nhảy lên</li>
+      <li>🥣 <b>"hạt"</b>: cho Bug ăn, giữ tốc độ đội</li>
+      <li>🏆 <b>"hạng"</b>: xem hạng &amp; km</li>
+      <li>❤️ Tap tim: đủ 500 → mưa cá</li>
+      <li>🐕 Follow mới: Bug đuổi theo</li>
+      <li>🎁 Quà: spotlight + cưỡi xe</li>
+    </ul>
+  </section>
+
+  <section id="bossBoard" class="panel">
+    <h2>🐭 ĐÁNH BOSS RĂNG SẮT</h2>
+    <ul>
+      <li>🐾 <b>"cào"</b>: tấn công boss</li>
+      <li>⚡ 5 mèo cùng <b>"cào"</b> → đồng loạt x2</li>
+      <li>🔥 Thả tim: nạp <b>Nộ</b> → mưa cá dội boss</li>
+      <li>🥣 <b>"hạt"</b>: cho Bug ăn</li>
+      <li>🎁 Quà: đòn mạnh + đoàn trợ trận</li>
+      <li>💀 Gục: hồi sinh sau 15s, máu +20%</li>
+    </ul>
+  </section>
+
+  <div id="bossHud">
+    <div id="bossChip">🐭 CHUỘT TRÙM RĂNG SẮT — Vòng <span id="bossRound">1</span></div>
+    <div class="boss-hp-bar"><div id="bossHpFill"></div><span id="bossHpText">1000 / 1000</span></div>
+    <div id="bossBarsText">×4 THANH MÁU • Đã hạ 0,0000%</div>
+    <div class="boss-rage-bar"><div id="bossRageFill"></div></div>
+    <div id="bossRageText">🔥 Nộ 0/200</div>
+    <div id="bossSyncText">Đồng loạt: 0/5</div>
+  </div>
+
+  <div id="bossTaunt" class="hidden"></div>
+  <div id="bossSyncFlash" class="hidden">⚡ ĐÒN ĐỒNG LOẠT ×2!</div>
+
+  <aside id="rankPanel" class="panel">
+    <h2>🏃 BẠN ĐỒNG HÀNH</h2>
+    <div class="rank-page" id="rankPage">Trang 1/1</div>
+    <ol id="rankList"></ol>
+  </aside>
+
+  <aside id="bossRankPanel" class="panel">
+    <h2>⚔️ TOP MÈO GÓP SỨC</h2>
+    <ol id="bossRankList"></ol>
+  </aside>
+
+  <div id="bossBanner" class="hidden">
+    <div id="bossBannerTitle">🎉 HẠ GỤC RĂNG SẮT!</div>
+    <div id="bossBannerSub"></div>
+    <div id="bossBannerTop"></div>
+  </div>
+
+  <div id="guideBanner">Follow để Bug đuổi theo nha! 🐕</div>
+
+  <footer><div id="ticker">Chào mừng cả nhà đến với nhà của Bug! 🐾</div></footer>
+
+  <div id="rainLayer"></div>
+  <button id="ttsEnable">🔊 Bấm vào đây để bật giọng đọc + tiếng mèo kêu</button>
+</div>
+<script src="/static/stage.js"></script>
+</body>
+</html>

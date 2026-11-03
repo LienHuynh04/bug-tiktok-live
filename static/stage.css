@@ -1,0 +1,188 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; overflow: hidden; background: #8ed4f7; }
+#stage { position: relative; width: 100vw; height: 100vh; }
+#world { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* ---------- tiêu đề kiểu "Chùa An Lạc": vàng, trang trọng ---------- */
+#titleBar {
+  position: absolute; top: 1.4vh; left: 50%; transform: translateX(-50%);
+  width: 94%; text-align: center; z-index: 10; pointer-events: none;
+  text-shadow: 0 2px 10px rgba(60,30,0,.45);
+}
+#titleBar p { color: #fff; font-size: 1.5vh; margin-top: .35vh; font-weight: 600; text-shadow: 0 1px 6px rgba(60,30,0,.4); }
+#titleBar b { color: #ffe9a8; }
+
+/* ---------- chế độ Đánh Boss: hoán đổi panel ---------- */
+#titleBoss { display: none; }
+#stage.boss-mode #titleBoss { display: block; }
+#stage.boss-mode #titleRun { display: none; }
+.boss-only { display: none; }
+#stage.boss-mode .boss-only { display: block; }
+#stage.boss-mode .run-only { display: none; }
+#bossBoard, #bossRankPanel { display: none; }
+#stage.boss-mode #bossBoard, #stage.boss-mode #bossRankPanel { display: block; }
+#stage.boss-mode #menuBoard, #stage.boss-mode #rankPanel { display: none; }
+
+/* ---------- bảng lệnh boss (kiểu menuBoard, tông tím – vàng kim) ---------- */
+#bossBoard { top: 37.5vh; left: 2.5vw; width: 34%; padding: 0 0 .8vh; overflow: hidden; }
+#bossBoard h2 {
+  background: linear-gradient(90deg, #5b2ea6, #b8860b);
+  font-size: 1.8vh; text-align: center; padding: .65vh 6px; letter-spacing: .03em;
+}
+#bossBoard ul { list-style: none; padding: .6vh 12px 0; font-size: 1.3vh; line-height: 1.52; }
+#bossBoard b { color: #ffd88a; }
+
+/* ---------- TOP mèo góp sức (kiểu rankPanel, hẹp hơn để nhường thanh máu) ---------- */
+#bossRankPanel { top: 30vh; right: 2.5vw; width: 26%; }
+#bossRankPanel h2 { font-size: 1.75vh; color: #ffd34d; letter-spacing: .04em; }
+#bossRankList { list-style: none; margin-top: .6vh; font-size: 1.5vh; line-height: 1.75; }
+#bossRankList li { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+#bossRankList .rname { overflow: hidden; text-overflow: ellipsis; }
+#bossRankList .rkm { color: #ffd88a; font-weight: 700; }
+
+/* ---------- HUD boss: chip + thanh máu + thanh nộ (DOM, giữa phía trên) ---------- */
+#bossHud {
+  display: none; position: absolute; top: 15.8vh; left: 50%; transform: translateX(-50%);
+  width: 42%; z-index: 11; text-align: center; pointer-events: none;
+}
+#stage.boss-mode #bossHud { display: block; }
+#bossChip {
+  display: inline-block; background: rgba(23,16,48,.92); color: #ffd34d;
+  border: 2px solid #ffd34d; border-radius: 12px;
+  font-size: 1.65vh; font-weight: 800; letter-spacing: .02em; padding: .45vh 12px;
+  white-space: nowrap;
+}
+.boss-hp-bar {
+  position: relative; margin-top: .7vh; height: 1.9vh;
+  background: rgba(10,10,20,.65); border-radius: 8px; overflow: hidden;
+}
+#bossHpFill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff5e3a, #d81b60); transition: width .3s; }
+#bossHpText {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 1.4vh; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+}
+.boss-rage-bar { margin-top: .45vh; height: 1.05vh; background: rgba(10,10,20,.65); border-radius: 6px; overflow: hidden; }
+#bossRageFill { height: 100%; width: 0%; background: #ff9f1a; transition: width .3s; }
+#bossRageText { margin-top: .3vh; color: #17304f; font-size: 1.25vh; font-weight: 700; text-shadow: 0 1px 4px rgba(255,255,255,.7); }
+/* dòng ×N thanh máu + % đã hạ, ngay dưới thanh HP */
+#bossBarsText {
+  margin-top: .35vh; color: #fff; font-size: 1.22vh; font-weight: 800;
+  letter-spacing: .02em; text-shadow: 0 1px 4px rgba(20,10,40,.7); white-space: nowrap;
+}
+#bossSyncText {
+  margin-top: .25vh; color: #17304f; font-size: 1.25vh; font-weight: 700;
+  text-shadow: 0 1px 4px rgba(255,255,255,.7); white-space: nowrap;
+}
+
+/* ---------- bong bóng thoại boss chửi lại ---------- */
+#bossTaunt {
+  position: absolute; top: 25.2vh; left: 50%; transform: translateX(-50%);
+  max-width: 74%; z-index: 24; text-align: center; pointer-events: none;
+  background: #fff; color: #3a1c71; border: 3px solid #5b2ea6; border-radius: 16px;
+  font-size: 1.7vh; font-weight: 800; padding: .75vh 16px;
+  box-shadow: 0 8px 26px rgba(20,10,50,.4);
+}
+#bossTaunt.hidden { display: none; }
+#bossTaunt::after {
+  content: ""; position: absolute; left: 50%; bottom: -11px; transform: translateX(-50%);
+  border: 6px solid transparent; border-top: 8px solid #5b2ea6; border-bottom: 0;
+}
+
+/* ---------- chớp báo đòn đồng loạt ---------- */
+#bossSyncFlash {
+  position: absolute; top: 60.5vh; left: 50%; transform: translateX(-50%);
+  z-index: 26; pointer-events: none; white-space: nowrap;
+  background: linear-gradient(90deg, #b8860b, #ffd34d); color: #241743;
+  font-size: 2.1vh; font-weight: 900; letter-spacing: .02em;
+  padding: .7vh 20px; border-radius: 99px; box-shadow: 0 0 26px rgba(255,211,77,.85);
+}
+#bossSyncFlash.hidden { display: none; }
+
+/* ---------- banner hạ gục boss ---------- */
+#bossBanner {
+  position: absolute; top: 30vh; left: 50%; transform: translateX(-50%);
+  width: 86%; z-index: 30; text-align: center; pointer-events: none;
+  background: rgba(23, 16, 48, .92); color: #fff;
+  border: 3px solid #ffd34d; border-radius: 20px; padding: 1.6vh 18px;
+  box-shadow: 0 10px 40px rgba(20, 10, 50, .55);
+}
+#bossBanner.hidden { display: none; }
+#bossBannerTitle { font-size: 3.4vh; font-weight: 900; color: #ffd34d; letter-spacing: .02em; }
+#bossBannerSub { font-size: 1.9vh; font-weight: 700; margin-top: .6vh; }
+#bossBannerTop { font-size: 1.6vh; margin-top: .5vh; line-height: 1.6; opacity: .95; }
+
+/* ---------- panel chung kiểu Kitzy: nền tối, bo góc ---------- */
+.panel {
+  position: absolute; z-index: 10;
+  background: rgba(23, 30, 52, .88); color: #fff;
+  border-radius: 16px; padding: 1.1vh 14px;
+  box-shadow: 0 6px 24px rgba(10, 20, 40, .35);
+}
+
+/* ---------- panel thống kê: góc trái ---------- */
+#statsPanel { top: 15vh; left: 2.5vw; width: 29%; font-size: 1.5vh; }
+.stat-row { margin: .24vh 0; white-space: nowrap; }
+#eventLog { list-style: none; margin-top: .6vh; border-top: 1px solid rgba(255,255,255,.18); padding-top: .5vh; font-size: 1.22vh; line-height: 1.45; opacity: .95; }
+#eventLog li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.like-box { margin-top: .8vh; }
+.like-label { font-size: 1.35vh; margin-bottom: .35vh; }
+.like-bar, .satiety-bar { height: 1vh; background: rgba(255,255,255,.18); border-radius: 99px; overflow: hidden; }
+#likeFill { height: 100%; width: 0%; background: linear-gradient(90deg, #ff5e8a, #ffb84d); transition: width .4s; }
+#satietyFill { height: 100%; width: 55%; background: linear-gradient(90deg, #ffb84d, #7be495); transition: width .4s; }
+
+/* ---------- bảng menu lệnh ---------- */
+#menuBoard { top: 37.5vh; left: 2.5vw; width: 34%; padding: 0 0 .8vh; overflow: hidden; }
+#menuBoard h2 {
+  background: linear-gradient(90deg, #e84393, #fd5e53);
+  font-size: 1.8vh; text-align: center; padding: .65vh 6px; letter-spacing: .03em;
+}
+#menuBoard ul { list-style: none; padding: .6vh 12px 0; font-size: 1.3vh; line-height: 1.52; }
+#menuBoard b { color: #ffd88a; }
+
+/* ---------- bảng xếp hạng: bên phải, phân trang ---------- */
+#rankPanel { top: 27vh; right: 2.5vw; width: 30%; }
+#rankPanel h2 { font-size: 1.75vh; color: #ffd34d; letter-spacing: .04em; }
+.rank-page { float: right; font-size: 1.3vh; opacity: .85; margin-top: -2.2vh; }
+#rankList { list-style: none; margin-top: .6vh; font-size: 1.5vh; line-height: 1.75; }
+#rankList li { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+#rankList .rname { overflow: hidden; text-overflow: ellipsis; }
+#rankList .rkm { color: #ffd88a; font-weight: 700; }
+#rankList li.me { color: #7be495; }
+
+/* ---------- thanh Bug: độ no — nằm giữa, ngay dưới tiêu đề ---------- */
+#bugBar { top: 11.3vh; left: 55%; transform: translateX(-50%); width: 48%; display: flex; gap: 10px; align-items: center; padding: .55vh 14px; }
+#bugFace { font-size: 3.1vh; }
+.bug-info { flex: 1; }
+.bug-title { font-size: 1.5vh; font-weight: 700; }
+.bug-title span { color: #ffd88a; font-weight: 600; font-size: 1.3vh; }
+.bug-sub { font-size: 1.1vh; opacity: .85; margin-top: .25vh; }
+#bugBar.hungry { outline: 2px solid #ff5e8a; }
+#bugBar.hungry .bug-sub { color: #ff9db8; opacity: 1; }
+
+/* ---------- banner + ticker ---------- */
+#guideBanner {
+  position: absolute; bottom: 5.6vh; left: 6vw; max-width: 47vw;
+  z-index: 10; background: rgba(255,255,255,.92); color: #17304f;
+  font-size: 1.9vh; font-weight: 800; padding: .7vh 18px; border-radius: 99px;
+  box-shadow: 0 4px 16px rgba(10,20,40,.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* boss mode: câu dẫn dài hơn, nhấc pill lên trên nút bật tiếng cho khỏi bị che */
+#stage.boss-mode #guideBanner { bottom: 9.6vh; }
+footer {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 10;
+  background: rgba(10, 14, 28, .82); padding: .85vh 14px;
+}
+#ticker { color: #fff; font-size: 1.6vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- mưa / nút bật tiếng ---------- */
+#rainLayer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 40; }
+.rain-drop { position: absolute; top: -6vh; animation: fall linear forwards; }
+@keyframes fall { to { transform: translateY(112vh) rotate(40deg); } }
+#ttsEnable {
+  position: absolute; right: 2.5vw; bottom: 5.4vh; z-index: 60;
+  background: #ffb84d; color: #241743; border: 0; border-radius: 99px;
+  font-size: 1.55vh; font-weight: 700; padding: 1vh 16px; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(10,20,40,.35);
+}
+#ttsEnable.hidden { display: none; }

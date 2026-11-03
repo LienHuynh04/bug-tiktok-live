@@ -1,0 +1,4 @@
+data/scores.json
+.venv/
+__pycache__/
+data/tts_cache/
