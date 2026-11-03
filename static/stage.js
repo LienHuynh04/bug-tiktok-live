@@ -188,6 +188,9 @@ function setStageMode(mode) {
   $("stage").classList.toggle("boss-mode", mode === "boss");
   // nền boss tối sâu -> panel chuyển kính tối cho khỏi "nổi" lạc tông (chỉ boss)
   $("stage").classList.toggle("boss-dark", mode === "boss");
+  // Banner hướng dẫn đổi ngay theo chế độ (không chờ vòng xoay 6s)
+  guideIdx = 0;
+  $("guideBanner").textContent = (mode === "boss" ? BOSS_GUIDE_TEXTS : GUIDE_TEXTS)[0];
 }
 
 function updateBoss(b) {
@@ -326,10 +329,51 @@ function renderSnapshot(s) {
     $("satietyFill").style.width = s.bug_satiety + "%";
     const hungry = s.bug_satiety < 25;
     $("bugBar").classList.toggle("hungry", hungry);
-    $("bugFace").textContent = hungry ? "😿" : "🐱";
+    $("bugFaceEmoji").textContent = hungry ? "😿" : "🐱";
     $("bugMood").textContent = hungry ? "đang đói — cả đội chậm 30%!" : s.bug_satiety > 70 ? "no căng, đang vui vẻ" : "đang vui vẻ";
     $("bugSub").textContent = hungry ? "⚠️ Bug đói rồi — gõ HẠT cho Bug ăn mau!" : "Độ no của Bug — gõ HẠT để cho ăn";
   }
+  if (s.bug) applyBugMood(s.bug);
+}
+
+/* ---- Tâm trạng Bug: ngủ / khó chịu — huy hiệu + chữ trạng thái + hiệu ứng ----
+   Ưu tiên hiển thị: đang ngủ > đang khó chịu > trạng thái theo độ no ở trên. */
+let bugMoodState = "";
+function applyBugMood(b) {
+  const bar = $("bugBar"), badge = $("bugBadge"), face = $("bugFace");
+  const state = b.sleeping ? "sleeping" : (b.annoyed ? "annoyed" : "");
+  bar.classList.toggle("sleeping", state === "sleeping");
+  bar.classList.toggle("annoyed", state === "annoyed");
+  if (state === "sleeping") {
+    badge.textContent = "💤";
+    badge.classList.remove("hidden");
+    $("bugMood").textContent = "đang ngủ 😴";
+  } else if (state === "annoyed") {
+    badge.textContent = "💢";
+    badge.classList.remove("hidden");
+    $("bugMood").textContent = "đang khó chịu 💢";
+  } else {
+    badge.classList.add("hidden");
+  }
+  if (state !== bugMoodState) {
+    // Đổi trạng thái: khó chịu thì rung ảnh, còn lại thì nảy pop nhẹ
+    const cls = state === "annoyed" ? "shake" : "pop";
+    face.classList.remove("shake", "pop");
+    void face.offsetWidth;
+    face.classList.add(cls);
+    setTimeout(() => face.classList.remove(cls), 650);
+    bugMoodState = state;
+  }
+}
+
+/* Bong bóng thoại nhỏ ngay trên thanh Bug cho các sự kiện tâm trạng */
+let bugBubbleTimer = null;
+function showBugBubble(text) {
+  const el = $("bugBubble");
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(bugBubbleTimer);
+  bugBubbleTimer = setTimeout(() => el.classList.remove("show"), 3500);
 }
 setInterval(() => {
   const sec = Math.floor((Date.now() - sessionStart) / 1000);
@@ -347,11 +391,12 @@ const GUIDE_TEXTS = [
   "Bug đói là cả đội chạy chậm lại — nhớ gõ \"hạt\" 🥣",
 ];
 const BOSS_GUIDE_TEXTS = [
-  "Gõ \"cào\" để mèo của bạn tấn công Chuột Trùm Răng Sắt 🐾",
+  "🐾 Gõ CÀO để tấn công boss!",
   "5 mèo cùng \"cào\" trong 3 giây → ĐÒN ĐỒNG LOẠT x2! ⚡",
-  "Thả tim nạp Nộ — đầy là mưa cá trút xuống boss! 🔥",
+  "🔥 Thả tim nạp Nộ → mưa cá dội boss",
   "Boss choáng là lúc cào đau gấp đôi đó! 💫",
   "Gõ \"hạt\" cho Bug ăn lấy sức 🥣",
+  "🏆 Đánh nhiều lên hạng mèo: Săn → Chiến → Tướng → Vương",
 ];
 let guideIdx = 0;
 setInterval(() => {
@@ -501,6 +546,14 @@ function drawCat(x, y, s, rec, now, scale = 1, labelText = null) {
     ctx2d.fillText(rec.bubble, 0, by + s * 0.02, bw - 10);
   }
   ctx2d.restore();
+}
+
+/* ---- Ảnh chân dung Bug: nạp từ window.BUG_PHOTO (static/bug-photo.js).
+   Thiếu file / nạp lỗi -> giữ emoji 🐱 trong khung như cũ. ---- */
+if (typeof window !== "undefined" && window.BUG_PHOTO) {
+  const bpImg = $("bugPhoto");
+  bpImg.onload = () => { bpImg.style.display = ""; };
+  bpImg.src = window.BUG_PHOTO;
 }
 
 /* ---- Ảnh Tàn Ảnh boss: nạp sẵn từ window.BOSS_ART (static/boss-art.js).
@@ -1226,6 +1279,32 @@ function handle(msg) {
       break;
     }
     case "feed_blocked": ticker("⏳ " + msg.message); break;
+    case "bug_sleep":
+      showBugBubble("💤 Bug ngủ đây…");
+      ticker("🌙 Bug đi ngủ — cả nhà nói khẽ thôi nha");
+      logEvent("🌙 Bug đi ngủ");
+      break;
+    case "bug_wake":
+      showBugBubble("🥱 ngủ dậy rồi!");
+      ticker("🐱 Bug ngủ dậy rồi, khỏe re!");
+      logEvent("🐱 Bug ngủ dậy");
+      break;
+    case "bug_overfed":
+      showBugBubble("No quá rồi… 😵");
+      ticker("🍗 Bug bị cho ăn quá độ — no căng bụng rồi!");
+      logEvent("🍗 Bug ăn quá no, khó chịu");
+      break;
+    case "bug_wake_annoyed":
+      showBugBubble("💢 ai phá giấc ngủ của tui!");
+      ticker("💢 Bug bị phá giấc ngủ — đang khó chịu!");
+      logEvent("💢 Bug thức dậy khó chịu");
+      break;
+    case "bug_disturbed":
+      showBugBubble("🤫 suỵt…");
+      break;
+    case "bug_refuse":
+      showBugBubble("💢 để Bug yên một lát…");
+      break;
     case "likes": renderSnapshot(msg); break;
     case "rain": rain(msg.kind, msg.seconds || 30); ticker("🌧️🐟 MƯA CÁ! Cả nhà hứng cá nào!"); logEvent("🌧️🐟 Mưa cá!"); break;
     case "gift": {

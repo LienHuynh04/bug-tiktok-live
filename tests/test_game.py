@@ -5,7 +5,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from game import GameState, Race, normalize  # noqa: E402
+from game import (GameState, Race, normalize,  # noqa: E402
+                  OPENING_RUN, OPENING_BOSS, IDLE_RUN, IDLE_BOSS)
 
 
 def run():
@@ -333,6 +334,86 @@ def run():
     assert gfix.current_boss_skin() == "hoa"
     gfix.set_boss_skin("auto")
     assert gfix.current_boss_skin() == "bang"   # về auto -> vòng 2 = Băng Quang
+
+    # ---------- Tâm trạng Bug: ăn quá độ / ngủ / phá giấc / khó chịu ----------
+    gm2 = GameState(like_goal=10, rng=random.Random(67))
+
+    # Câu mở màn + nhắc luật theo chế độ: run giữ nguyên văn, boss hướng boss
+    assert gm2.opening_line() == OPENING_RUN
+    assert gm2.idle_line() == IDLE_RUN
+    gm2.set_stage_mode("boss", 1000)
+    assert gm2.opening_line() == OPENING_BOSS and "CÀO" in gm2.opening_line()
+    assert gm2.idle_line() == IDLE_BOSS
+    gm2.set_stage_mode("run")
+    assert gm2.opening_line() == OPENING_RUN
+
+    # Cho ăn bình thường (chưa no): giảm 10 khó chịu
+    gm2.bug_annoyance = 25.0
+    gm2.bug_satiety = 50
+    eff = gm2.handle_comment("m1", "Sen Ăn", "hạt", now=100.0)
+    assert any(e["type"] == "feed" for e in eff)
+    assert gm2.bug_annoyance == 15.0
+
+    # Cho ăn khi độ no >= 90 -> quá độ: +30 khó chịu + sự kiện bug_overfed
+    gm2.bug_satiety = 95
+    eff = gm2.handle_comment("m2", "Sen No", "hạt", now=101.0)
+    assert any(e["type"] == "bug_overfed" for e in eff)
+    assert gm2.bug_annoyance == 45.0
+    assert gm2.bug_satiety == 97
+
+    # Khó chịu >= 60: cho ăn bị từ chối (độ no không đổi), gọi ngủ cũng bị từ chối
+    gm2.bug_annoyance = 80.0
+    satiety_before = gm2.bug_satiety
+    eff = gm2.handle_comment("m3", "Sen Cứng", "hạt", now=102.0)
+    assert any(e["type"] == "bug_refuse" for e in eff)
+    assert not any(e["type"] == "feed" for e in eff)
+    assert gm2.bug_satiety == satiety_before
+    eff = gm2.handle_comment("m3", "Sen Cứng", "ngủ", now=103.0)
+    assert any(e["type"] == "bug_refuse" for e in eff)
+    assert gm2.bug_sleep_until == 0
+
+    # Hạ nhiệt khi thức: 0.4/s (tick đầu chỉ chốt mốc; dt mỗi tick kẹp tối đa 5s)
+    gm2.tick(now_wall=2000.0)
+    gm2.bug_annoyance = 50.0
+    gm2.tick(now_wall=2005.0)
+    assert abs(gm2.bug_annoyance - 48.0) < 0.01
+
+    # Lệnh NGỦ: sự kiện bug_sleep + snapshot báo đang ngủ, đủ 3 khoá tâm trạng
+    gm2.bug_annoyance = 0.0
+    eff = gm2.handle_comment("m4", "Sen Ru", "ngủ", now=110.0)
+    assert any(e["type"] == "bug_sleep" for e in eff)
+    snap = gm2.snapshot()
+    assert snap["bug"]["sleeping"] is True
+    assert snap["bug"]["annoyed"] is False
+    assert {"sleeping", "annoyed", "annoyance"} <= set(snap["bug"].keys())
+
+    # Đang ngủ: hạ nhiệt nhanh 2.0/s (đặt lại mức bực sau tick chốt mốc)
+    t0 = time.time()
+    gm2.tick(now_wall=t0)
+    gm2.bug_annoyance = 40.0
+    gm2.tick(now_wall=t0 + 5)
+    assert abs(gm2.bug_annoyance - 30.0) < 0.01
+
+    # Phá giấc 3 lần trong một giấc (cho ăn + gọi ngủ + quà) -> dậy khó chịu
+    eff = gm2.handle_comment("m5", "Sen Phá", "hạt", now=120.0)
+    assert any(e["type"] == "bug_disturbed" for e in eff)
+    eff = gm2.handle_comment("m6", "Sen Phá 2", "đi ngủ", now=121.0)
+    assert any(e["type"] == "bug_disturbed" for e in eff)
+    eff = gm2.handle_gift("m7", "Sen Quà", "Hoa hồng", 1)
+    assert any(e["type"] == "bug_wake_annoyed" for e in eff)
+    assert gm2.bug_sleep_until == 0
+    assert gm2.bug_annoyance >= 70
+    snap = gm2.snapshot()
+    assert snap["bug"]["annoyed"] is True and snap["bug"]["sleeping"] is False
+
+    # Ngủ đủ giấc -> tự dậy (bug_wake) + hạ 20 khó chịu
+    gm2.bug_annoyance = 50.0
+    gm2.bug_annoyed_until = 0.0
+    gm2.bug_sleep_until = time.time() - 1  # giả lập đã ngủ đủ giấc
+    eff = gm2.tick()
+    assert any(e["type"] == "bug_wake" for e in eff)
+    assert gm2.bug_sleep_until == 0
+    assert gm2.bug_annoyance <= 30.0
 
     print("✅ Tất cả test game đều PASS")
 

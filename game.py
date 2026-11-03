@@ -194,6 +194,31 @@ def boss_skin_for_round(round_no: int) -> str:
     return ROUND_SKINS[idx]
 
 
+# --- Câu mở màn / nhắc luật theo chế độ sân khấu (run giữ nguyên văn cũ) ---
+OPENING_RUN = "Cả nhà gõ MEOW để nhận mèo, gõ CHẠY để vào đội chạy cùng Bug nha!"
+OPENING_BOSS = ("Chào cả nhà đến với nhà của Bug! Hôm nay Chuột Trùm Răng Sắt mò vào "
+                "cướp kho cá — cả nhà gõ CÀO để đánh boss cùng Bug nha! Thả tim nạp Nộ, "
+                "đủ 200 là mưa cá trút xuống đầu nó luôn!")
+IDLE_RUN = ("Cả nhà ơi, gõ meow để nhận một bé mèo mang tên mình, gõ hạt để cho Bug ăn, "
+            "gõ đua để đua mèo cùng nhau nha! Nhớ thả tim và chia sẻ live giúp Bug với.")
+IDLE_BOSS = ("Cả nhà ơi, gõ CÀO để tấn công Chuột Trùm Răng Sắt cùng Bug nha! Thả tim "
+             "nạp Nộ, đủ 200 là mưa cá trút xuống boss. Gõ HẠT cho Bug ăn lấy sức, "
+             "gõ NGỦ cho Bug nghỉ một lát nha!")
+
+# --- Thoại tâm trạng của Bug (xoay vòng cho đỡ lặp) ---
+OVERFEED_LINES = [
+    "Bug no căng bụng rồi, đừng cho ăn nữa!",
+    "No quá à... Bug khó chịu rồi đó!",
+    "Ơ ơ, bụng Bug tròn vo rồi!",
+]
+REFUSE_FEED_LINES = [
+    "Bug đang khó chịu, để Bug yên một lát!",
+    "Bug chưa muốn ăn đâu, để Bug nghỉ chút!",
+    "Thôi thôi, Bug đang khó chịu, lát nữa hãy cho ăn nha!",
+]
+SLEEP_TEXTS = {"ngu", "di ngu", "ngu di", "buon ngu", "cho bug ngu", "bug ngu", "ngu thoi"}
+
+
 class GameState:
     MAX_SEATS = 120
     FEED_COOLDOWN = 5.0        # giây, chống spam cho ăn / cho ăn quá độ
@@ -222,6 +247,14 @@ class GameState:
         self.total_likes = 0
         self.bug_satiety = 55          # Độ no của Bug: 0..100
         self.bug_mood = "happy"
+        # --- Tâm trạng Bug: cho ăn quá độ / bị phá giấc ngủ -> khó chịu ---
+        self.bug_annoyance = 0.0       # Mức khó chịu: 0..100 (>= 60 là đang khó chịu)
+        self.bug_sleep_until = 0.0     # Mốc wall-clock Bug ngủ tới; 0 = đang thức
+        self.bug_annoyed_until = 0.0   # Mốc wall-clock còn khó chịu tối thiểu (~12s)
+        self.bug_sleep_disturbances = 0  # Số lần bị phá trong giấc ngủ hiện tại
+        self._bug_last_tick_at: Optional[float] = None  # tick trước, tính decay tâm trạng
+        self._overfeed_idx = 0         # xoay vòng câu thoại khi bị cho ăn quá độ
+        self._refuse_idx = 0           # xoay vòng câu thoại khi Bug từ chối (đang khó chịu)
         self.follows_count = 0
         self.shares_count = 0
         self.race = Race()
@@ -262,6 +295,67 @@ class GameState:
         if self.boss_skin_pref in SKINS:
             return self.boss_skin_pref
         return boss_skin_for_round(self.boss.round)
+
+    # ------------------------------------------------------- tâm trạng Bug
+    def opening_line(self) -> str:
+        """Câu hướng dẫn đọc mở màn khi live kết nối / DEMO bắt đầu — theo chế độ."""
+        return OPENING_BOSS if self.stage_mode == "boss" else OPENING_RUN
+
+    def idle_line(self) -> str:
+        """Câu nhắc luật khi live im lặng lâu — theo chế độ sân khấu."""
+        return IDLE_BOSS if self.stage_mode == "boss" else IDLE_RUN
+
+    def _bug_sleeping(self, now_wall: float) -> bool:
+        return self.bug_sleep_until > now_wall
+
+    def _bug_annoyed(self, now_wall: float) -> bool:
+        """Đang khó chịu: mức bực >= 60, hoặc còn trong ~12s dư âm sau khi hạ nhiệt."""
+        return self.bug_annoyance >= 60 or now_wall < self.bug_annoyed_until
+
+    def _bug_disturb(self, now_wall: float) -> List[dict]:
+        """Phá giấc ngủ của Bug (cho ăn / gọi ngủ / tặng quà lúc Bug đang ngủ).
+        Lần thứ 3 trong cùng một giấc: Bug thức dậy trong trạng thái khó chịu."""
+        self.bug_sleep_disturbances += 1
+        effects: List[dict] = [{"type": "bug_disturbed",
+                                "disturbances": self.bug_sleep_disturbances}]
+        if self.bug_sleep_disturbances >= 3:
+            self.bug_sleep_until = 0.0
+            self.bug_sleep_disturbances = 0
+            self.bug_annoyance = max(self.bug_annoyance, 70.0)
+            self.bug_annoyed_until = now_wall + 12
+            effects.append({
+                "type": "bug_wake_annoyed",
+                "speak": "Ai phá giấc ngủ của Bug hoài vậy! Bug khó chịu rồi đó!",
+                "speak_priority": 2,
+            })
+        return effects
+
+    def _mood_tick(self, now_wall: float) -> List[dict]:
+        """Chạy trong tick(): hạ nhiệt mức khó chịu (ngủ hạ nhanh hơn),
+        Bug ngủ đủ giấc thì tự thức dậy, còn bực thì gia hạn trạng thái khó chịu."""
+        effects: List[dict] = []
+        if self._bug_last_tick_at is None:
+            dt = 0.5
+        else:
+            dt = max(0.0, min(5.0, now_wall - self._bug_last_tick_at))
+        self._bug_last_tick_at = now_wall
+        # Ngủ đủ giấc -> tự dậy, hạ bớt khó chịu
+        if self.bug_sleep_until and now_wall >= self.bug_sleep_until:
+            self.bug_sleep_until = 0.0
+            self.bug_sleep_disturbances = 0
+            self.bug_annoyance = max(0.0, self.bug_annoyance - 20)
+            effects.append({
+                "type": "bug_wake",
+                "speak": "Bug ngủ dậy rồi nè, khỏe re!",
+                "speak_priority": 4,
+            })
+        sleeping = self._bug_sleeping(now_wall)
+        rate = 2.0 if sleeping else 0.4
+        if self.bug_annoyance > 0:
+            self.bug_annoyance = max(0.0, self.bug_annoyance - rate * dt)
+        if self.bug_annoyance >= 60:
+            self.bug_annoyed_until = now_wall + 12
+        return effects
 
     def set_stage_mode(self, mode: str, boss_max_hp: Optional[int] = None,
                        boss_taunts: Optional[bool] = None,
@@ -407,12 +501,20 @@ class GameState:
         # đơn giản & ổn định: giữ thứ tự ghế.
         seated = sorted(self.players.values(), key=lambda p: p.seat)
         now_mono = time.monotonic()
+        now_wall_snap = time.time()
         snap = {
             "players": [p.public(now_mono) for p in seated[: self.MAX_SEATS]],
             "player_count": len(self.players),
             "leaderboard": self.leaderboard(5),
             "bug_satiety": round(self.bug_satiety),
             "bug_mood": self.bug_mood,
+            "bug": {
+                "satiety": round(self.bug_satiety),
+                "mood": self.bug_mood,
+                "sleeping": self._bug_sleeping(now_wall_snap),
+                "annoyed": self._bug_annoyed(now_wall_snap),
+                "annoyance": round(self.bug_annoyance),
+            },
             "likes_since_rain": self.likes_since_rain,
             "like_goal": self.like_goal,
             "total_likes": self.total_likes,
@@ -582,9 +684,48 @@ class GameState:
                 effects.append({"type": "run_surge", "player": p.public(now)})
             return effects
 
+        # --- Lệnh NGỦ: gõ NGỦ / ĐI NGỦ / NGỦ ĐI / BUỒN NGỦ -> Bug ngủ 25s ---
+        if text in SLEEP_TEXTS:
+            now_wall = time.time()
+            if self._bug_sleeping(now_wall):
+                # Đang ngủ mà còn gọi ngủ tiếp = phá giấc ngủ
+                effects += self._bug_disturb(now_wall)
+                return effects
+            if self._bug_annoyed(now_wall):
+                effects.append({
+                    "type": "bug_refuse", "reason": "sleep", "player": p.public(),
+                    "speak": "Bug đang khó chịu, chưa muốn ngủ đâu!",
+                    "speak_priority": 4,
+                })
+                return effects
+            self.bug_sleep_until = now_wall + 25
+            self.bug_sleep_disturbances = 0
+            effects.append({
+                "type": "bug_sleep", "player": p.public(),
+                "speak": "Bug đi ngủ đây, cả nhà nói khẽ thôi nha~",
+                "speak_priority": 5,
+            })
+            return effects
+
         # --- Lệnh CHO ĂN: gõ HẠT / PATE / CHO ĂN ---
         # Lưu ý: không dùng token "ca" vì "cả nhà ơi" cũng normalize thành "ca nha oi".
         if tokens & {"hat", "pate"} or text in ("an", "cho an", "an di", "bug an", "cho bug an"):
+            now_wall = time.time()
+            if self._bug_sleeping(now_wall):
+                # Cho ăn lúc Bug đang ngủ = phá giấc, không tính là cho ăn
+                effects += self._bug_disturb(now_wall)
+                return effects
+            if self._bug_annoyed(now_wall):
+                # Đang khó chịu: Bug từ chối ăn (dùng cooldown cho ăn để chống spam thoại)
+                if now - p.last_feed_at >= self.FEED_COOLDOWN:
+                    p.last_feed_at = now
+                    line = REFUSE_FEED_LINES[self._refuse_idx % len(REFUSE_FEED_LINES)]
+                    self._refuse_idx += 1
+                    effects.append({
+                        "type": "bug_refuse", "reason": "feed", "player": p.public(),
+                        "speak": line, "speak_priority": 4,
+                    })
+                return effects
             if now - p.last_feed_at < self.FEED_COOLDOWN:
                 effects.append({"type": "feed_blocked", "player": p.public(),
                                   "message": f"{p.nickname} chờ {int(self.FEED_COOLDOWN - (now - p.last_feed_at))}s nữa mới cho ăn tiếp được nha"})
@@ -592,14 +733,29 @@ class GameState:
             p.last_feed_at = now
             p.feeds += 1
             p.points += 5
+            overfed = self.bug_satiety >= 90
             self.bug_satiety = min(100, self.bug_satiety + 2)
-            self.bug_mood = "happy"
-            effects.append({
-                "type": "feed", "player": p.public(),
-                "bug_satiety": round(self.bug_satiety),
-                "speak": f"Cảm ơn {p.nickname} đã cho Bug ăn!",
-                "speak_priority": 4,
-            })
+            if overfed:
+                # Đã no >= 90 mà còn cho ăn: Bug khó chịu, kêu no thay vì cảm ơn
+                self.bug_annoyance = min(100.0, self.bug_annoyance + 30)
+                line = OVERFEED_LINES[self._overfeed_idx % len(OVERFEED_LINES)]
+                self._overfeed_idx += 1
+                effects.append({"type": "feed", "player": p.public(),
+                                "bug_satiety": round(self.bug_satiety)})
+                effects.append({
+                    "type": "bug_overfed", "player": p.public(),
+                    "annoyance": round(self.bug_annoyance),
+                    "speak": line, "speak_priority": 3,
+                })
+            else:
+                self.bug_annoyance = max(0.0, self.bug_annoyance - 10)
+                self.bug_mood = "happy"
+                effects.append({
+                    "type": "feed", "player": p.public(),
+                    "bug_satiety": round(self.bug_satiety),
+                    "speak": f"Cảm ơn {p.nickname} đã cho Bug ăn!",
+                    "speak_priority": 4,
+                })
             self._save_scores()
             return effects
 
@@ -683,6 +839,10 @@ class GameState:
             "speak": f"Cảm ơn {p.nickname} đã tặng {gift_name} cho Bug! Chúc bạn một ngày thật vui!",
             "speak_priority": 0,
         }]
+        # Quà đến lúc Bug đang ngủ cũng tính là phá giấc (vẫn cảm ơn như thường)
+        now_wall_gift = time.time()
+        if self._bug_sleeping(now_wall_gift):
+            effects += self._bug_disturb(now_wall_gift)
         # Chế độ Đánh Boss: quà (khi tự đến) hóa thành đòn đánh lên boss.
         # Chỉ là phản ứng hiệu ứng — kênh vẫn KHÔNG kêu gọi tặng quà.
         if self.stage_mode == "boss" and self.boss.alive:
@@ -776,6 +936,9 @@ class GameState:
         """Gọi mỗi ~0.5s từ app.py: giảm độ no, chạy máy trạng thái đua."""
         now_wall = time.time() if now_wall is None else now_wall
         effects: List[dict] = []
+
+        # --- Tâm trạng Bug: hạ nhiệt / ngủ đủ giấc tự dậy ---
+        effects += self._mood_tick(now_wall)
 
         # --- Đánh Boss: xướng boss xuất hiện 1 lần + hồi sinh sau 15s ---
         if self.stage_mode == "boss":
@@ -884,6 +1047,8 @@ class GameState:
         return effects
 
     def decay_satiety(self, amount: float = 0.3) -> None:
+        if self._bug_sleeping(time.time()):
+            amount *= 0.5  # Đang ngủ thì Bug đói chậm lại một nửa
         self.bug_satiety = max(0.0, self.bug_satiety - amount)
         if self.bug_satiety < 25:
             self.bug_mood = "hungry"

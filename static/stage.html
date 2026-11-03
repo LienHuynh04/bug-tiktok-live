@@ -32,12 +32,13 @@
   </aside>
 
   <div id="bugBar" class="panel">
-    <div id="bugFace">🐱</div>
+    <div id="bugFace"><span id="bugFaceEmoji">🐱</span><img id="bugPhoto" alt="Bug" style="display:none" onerror="this.style.display='none'"><span id="bugBadge" class="hidden">💤</span></div>
     <div class="bug-info">
       <div class="bug-title">Bug <span id="bugMood">đang vui vẻ</span></div>
       <div class="satiety-bar"><div id="satietyFill"></div></div>
       <div class="bug-sub" id="bugSub">Độ no của Bug — gõ HẠT để cho ăn</div>
     </div>
+    <div id="bugBubble"></div>
   </div>
 
   <section id="menuBoard" class="panel">
@@ -47,7 +48,8 @@
       <li>⚡ <b>"chạy nhanh"</b>: tăng tốc 20s</li>
       <li>😴 <b>"nghỉ"</b>: chậm lại</li>
       <li>🦘 <b>"nhảy"</b>: nhảy lên</li>
-      <li>🥣 <b>"hạt"</b>: cho Bug ăn, giữ tốc độ đội</li>
+      <li>🥣 <b>"hạt"</b>: cho Bug ăn • 🌙 <b>"ngủ"</b>: cho Bug ngủ</li>
+      <li>🍗 Cho ăn vừa thôi, no quá Bug khó chịu đó</li>
       <li>🏆 <b>"hạng"</b>: xem hạng &amp; km</li>
       <li>❤️ Tap tim: đủ 500 → mưa cá</li>
       <li>🐕 Follow mới: Bug đuổi theo</li>
@@ -61,7 +63,7 @@
       <li>🐾 <b>"cào"</b>: tấn công boss</li>
       <li>⚡ 5 mèo cùng <b>"cào"</b> → đồng loạt x2</li>
       <li>🔥 Thả tim: nạp <b>Nộ</b> → mưa cá dội boss</li>
-      <li>🥣 <b>"hạt"</b>: cho Bug ăn</li>
+      <li>🥣 <b>"hạt"</b>: cho Bug ăn • 🌙 <b>"ngủ"</b>: cho Bug ngủ</li>
       <li>🎁 Quà: đòn mạnh + đoàn trợ trận</li>
       <li>💀 Gục: hồi sinh sau 15s, máu +20%</li>
     </ul>
@@ -103,6 +105,7 @@
   <div id="rainLayer"></div>
   <button id="ttsEnable">🔊 Bấm vào đây để bật giọng đọc + tiếng mèo kêu</button>
 </div>
+<script src="/static/bug-photo.js"></script>
 <script src="/static/boss-art.js"></script>
 <script src="/static/stage.js"></script>
 </body>

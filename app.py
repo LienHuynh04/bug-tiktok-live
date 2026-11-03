@@ -474,7 +474,7 @@ class TikTokConnector:
                 await self.hub.broadcast({"type": "welcome_audio",
                                            "url": "/static/voice/chao-mung.mp3"})
             await self.hub.broadcast({"type": "speak",
-                                       "text": "Cả nhà gõ MEOW để nhận mèo, gõ CHẠY để vào đội chạy cùng Bug nha!",
+                                       "text": self.game.opening_line(),
                                        "speak_priority": 1})
 
         def guarded(fn):
@@ -557,12 +557,12 @@ DEMO_COMMENTS = [
     "meow", "hạt", "cho ăn", "Bug dễ thương quá", "chạy", "chạy nhanh",
     "cầu may mắn cho cả nhà", "mai thi rồi cầu điểm cao", "hạt", "nhảy",
     "xin vía sức khỏe cho ba mẹ", "meow", "cho ăn", "chạy", "chạy nhanh",
-    "hạng", "nghỉ", "chạy", "hạt",
+    "hạng", "nghỉ", "chạy", "hạt", "ngủ", "hạt", "ngủ", "buồn ngủ", "cho ăn",
 ]
 # Bình luận demo riêng cho chế độ Đánh Boss: spam CÀO là chính
 DEMO_BOSS_COMMENTS = [
     "cào", "cào", "CÀO", "cào", "hạt", "cào", "meow",
-    "đánh nó đi cả nhà", "cào", "cố lên Bug ơi", "cào", "cào",
+    "đánh nó đi cả nhà", "cào", "cố lên Bug ơi", "cào", "cào", "ngủ", "hạt",
 ]
 # (tên quà, kim cương) cho demo boss — quà to thỉnh thoảng mới có
 DEMO_BOSS_GIFTS = [("Hoa hồng", 1), ("Bánh quy", 5), ("Xe đồ chơi", 30), ("Sư tử", 150)]
@@ -686,7 +686,7 @@ def build_app() -> web.Application:
                 last_activity["ts"] = now
                 await hub.broadcast({
                     "type": "speak", "speak_priority": 5,
-                    "text": "Cả nhà ơi, gõ meow để nhận một bé mèo mang tên mình, gõ hạt để cho Bug ăn, gõ đua để đua mèo cùng nhau nha! Nhớ thả tim và chia sẻ live giúp Bug với.",
+                    "text": game.idle_line(),
                 })
 
     async def on_startup(app_):
@@ -797,6 +797,10 @@ def build_app() -> web.Application:
             if os.path.exists(os.path.join(STATIC, "voice", "chao-mung.mp3")):
                 await hub.broadcast({"type": "welcome_audio",
                                      "url": "/static/voice/chao-mung.mp3"})
+            # Câu hướng dẫn mở màn giống lúc live kết nối thật — theo chế độ sân khấu
+            await hub.broadcast({"type": "speak",
+                                 "text": game.opening_line(),
+                                 "speak_priority": 1})
             await emit_status(False, "Đang chạy DEMO (người xem giả) — tắt demo trước khi kết nối live thật")
         else:
             await demo.stop()
