@@ -175,6 +175,7 @@ const bossFx = {
   shakeUntil: 0,
   counterUntil: 0,  // phản đòn quét đuôi đang diễn (hiệu ứng hình ảnh)
   counterT0: 0,
+  skinFlashUntil: 0, // chớp sáng 300ms khi boss đổi Tàn Ảnh
 };
 let bossBannerMode = "";           // "" | "down" (ăn mừng 8s) | "wait" (đếm hồi sinh)
 let bossTauntTimer = null;
@@ -189,6 +190,14 @@ function setStageMode(mode) {
 
 function updateBoss(b) {
   bossState = b;
+  // Tàn Ảnh đổi (vòng mới / đổi tuỳ chọn) -> chớp sáng chuyển hình trên sân khấu
+  if (b.skin) {
+    if (lastBossSkin && b.skin !== lastBossSkin) bossFx.skinFlashUntil = performance.now() + 300;
+    lastBossSkin = b.skin;
+  }
+  $("bossName").textContent = b.skin_name
+    ? `${b.name || "CHUỘT TRÙM RĂNG SẮT"} • ${b.skin_name}`
+    : (b.name || "CHUỘT TRÙM RĂNG SẮT");
   bossDmgByUid.clear();
   bossRankByUid.clear();
   (b.top_damage || []).forEach((t) => {
@@ -492,100 +501,295 @@ function drawCat(x, y, s, rec, now, scale = 1, labelText = null) {
   ctx2d.restore();
 }
 
+/* ---- Ảnh Tàn Ảnh boss: nạp sẵn từ window.BOSS_ART (static/boss-art.js).
+   Thiếu file hoặc ảnh chưa nạp xong -> sân khấu lùi về vòng cổng + emoji như cũ. ---- */
+const bossArtImages = {};
+if (typeof window !== "undefined" && window.BOSS_ART) {
+  for (const key of Object.keys(window.BOSS_ART)) {
+    const img = new Image();
+    img.src = window.BOSS_ART[key];
+    bossArtImages[key] = img;
+  }
+}
+// Vị trí mắt trong khung ảnh vuông (tỉ lệ 0..1) — thắp quầng đỏ khi biến hình mốc >= 2
+const BOSS_ART_EYES = {
+  tu: [[0.418, 0.312], [0.578, 0.312]],
+  bang: [[0.420, 0.310], [0.585, 0.310]],
+  luc: [[0.415, 0.325], [0.585, 0.325]],
+  hoa: [[0.510, 0.324], [0.665, 0.330]],
+  kim: [[0.400, 0.355], [0.600, 0.355]],
+};
+let lastBossSkin = null; // Tàn Ảnh của snapshot trước — đổi khác là chớp sáng chuyển hình
+
+/* ---- Đấu trường tối huyền bí (chỉ khi có ảnh Tàn Ảnh): nền chàm sâu,
+   hào quang tím sau lưng boss, sương trôi, hạt sáng bay lên, vòng ma thuật. ---- */
+function drawBossArena(now, W, H, cx) {
+  const bg = ctx2d.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#070418"); bg.addColorStop(0.5, "#170b33"); bg.addColorStop(1, "#030208");
+  ctx2d.fillStyle = bg; ctx2d.fillRect(0, 0, W, H);
+  // hào quang tím mềm sau lưng boss
+  const glow = ctx2d.createRadialGradient(cx, H * 0.34, H * 0.05, cx, H * 0.34, H * 0.46);
+  glow.addColorStop(0, "rgba(124, 77, 255, .34)");
+  glow.addColorStop(0.55, "rgba(94, 53, 200, .16)");
+  glow.addColorStop(1, "rgba(94, 53, 200, 0)");
+  ctx2d.fillStyle = glow; ctx2d.fillRect(0, 0, W, H);
+  // sương mù: mấy quầng trắng-tím rất nhạt trôi ngang lưng chừng + sát chân boss
+  for (let i = 0; i < 6; i++) {
+    const my = H * (i % 2 ? 0.60 : 0.40) + (i % 3) * H * 0.012;
+    const mx = cx + Math.sin(now / (5200 + i * 900) + i * 1.9) * W * 0.30 + (i - 2.5) * W * 0.09;
+    const mr = W * (0.30 + (i % 3) * 0.07);
+    const mist = ctx2d.createRadialGradient(mx, my, 0, mx, my, mr);
+    mist.addColorStop(0, "rgba(196, 178, 255, .075)");
+    mist.addColorStop(1, "rgba(196, 178, 255, 0)");
+    ctx2d.save();
+    ctx2d.translate(mx, my); ctx2d.scale(1, 0.32); ctx2d.translate(-mx, -my);
+    ctx2d.fillStyle = mist;
+    ctx2d.beginPath(); ctx2d.arc(mx, my, mr, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.restore();
+  }
+  // hạt sáng tím/vàng lác đác bay lên
+  for (let i = 0; i < 26; i++) {
+    const speed = 0.014 + (i % 4) * 0.004;
+    const px = (i * 379.7) % W;
+    const py = H - ((now * speed + i * 173.3) % (H * 0.92)) - H * 0.03;
+    const tw = 0.35 + 0.65 * Math.abs(Math.sin(now / 700 + i * 2.3));
+    ctx2d.fillStyle = i % 3 === 0 ? `rgba(255, 205, 96, ${0.5 * tw})` : `rgba(178, 148, 255, ${0.55 * tw})`;
+    ctx2d.beginPath(); ctx2d.arc(px, py, i % 3 === 0 ? 2.4 : 1.8, 0, Math.PI * 2); ctx2d.fill();
+  }
+}
+
+/* ---- Vòng ma thuật dưới chân boss: vẽ SAU ảnh để quầng mép ảnh không che mất.
+   Quầng sáng tím + 2 vòng ellipse (vàng, tím) + vạch rune xoay chậm. ---- */
+function drawMagicCircle(now, W, H, cx, baseY) {
+  const rx = W * 0.335, ry = rx * 0.30;
+  ctx2d.save();
+  ctx2d.translate(cx, baseY);
+  const under = ctx2d.createRadialGradient(0, 0, 0, 0, 0, rx);
+  under.addColorStop(0, "rgba(140, 95, 255, .28)"); under.addColorStop(1, "rgba(140, 95, 255, 0)");
+  ctx2d.fillStyle = under;
+  ctx2d.beginPath(); ctx2d.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.lineWidth = 3; ctx2d.strokeStyle = "rgba(217, 164, 65, .95)";
+  ctx2d.beginPath(); ctx2d.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx2d.stroke();
+  ctx2d.lineWidth = 2; ctx2d.strokeStyle = "rgba(150, 110, 255, .65)";
+  ctx2d.beginPath(); ctx2d.ellipse(0, 0, rx * 0.82, ry * 0.82, 0, 0, Math.PI * 2); ctx2d.stroke();
+  const rot = now / 4500;
+  ctx2d.strokeStyle = "rgba(255, 215, 130, .8)"; ctx2d.lineWidth = 2.5;
+  for (let i = 0; i < 24; i++) {
+    const a = rot + (i / 24) * Math.PI * 2;
+    ctx2d.beginPath();
+    ctx2d.moveTo(Math.cos(a) * rx * 0.90, Math.sin(a) * ry * 0.90);
+    ctx2d.lineTo(Math.cos(a) * rx * 0.97, Math.sin(a) * ry * 0.97);
+    ctx2d.stroke();
+  }
+  ctx2d.restore();
+}
+
+/* ---- 2 sợi xích vàng từ 2 góc trên chéo xuống sau vai boss ---- */
+function drawBossChains(W, H) {
+  const runs = [
+    { x0: -W * 0.01, y0: -H * 0.005, x1: W * 0.315, y1: H * 0.315 },
+    { x0: W * 1.01, y0: -H * 0.005, x1: W * 0.685, y1: H * 0.315 },
+  ];
+  for (const r of runs) {
+    const dx = r.x1 - r.x0, dy = r.y1 - r.y0;
+    const step = H * 0.0175;
+    const ang = Math.atan2(dy, dx);
+    const n = Math.max(1, Math.floor(Math.hypot(dx, dy) / step));
+    for (let i = 0; i <= n; i++) {
+      const x = r.x0 + dx * (i / n), y = r.y0 + dy * (i / n);
+      ctx2d.save();
+      ctx2d.translate(x, y);
+      ctx2d.rotate(ang + (i % 2 ? Math.PI / 2 : 0));
+      ctx2d.lineWidth = 2.6; ctx2d.strokeStyle = "#d9a441";
+      ctx2d.beginPath(); ctx2d.ellipse(0, 0, step * 0.42, step * 0.24, 0, 0, Math.PI * 2); ctx2d.stroke();
+      ctx2d.lineWidth = 1.1; ctx2d.strokeStyle = "rgba(255, 226, 150, .65)";
+      ctx2d.beginPath(); ctx2d.ellipse(-step * 0.08, -step * 0.06, step * 0.30, step * 0.15, 0, 0, Math.PI * 2); ctx2d.stroke();
+      ctx2d.restore();
+    }
+  }
+}
+
+/* ---- Vẽ ảnh Tàn Ảnh + làm mờ 4 mép hoà vào nền đấu trường (không lộ cạnh vuông) ---- */
+function drawBossArt(img, x, y, size) {
+  ctx2d.drawImage(img, x, y, size, size);
+  let g;
+  const fyT = size * 0.15, fyB = size * 0.24, fx = size * 0.13;
+  g = ctx2d.createLinearGradient(0, y, 0, y + fyT);
+  g.addColorStop(0, "rgba(10, 5, 24, .96)"); g.addColorStop(1, "rgba(10, 5, 24, 0)");
+  ctx2d.fillStyle = g; ctx2d.fillRect(x, y, size, fyT);
+  g = ctx2d.createLinearGradient(0, y + size - fyB, 0, y + size);
+  g.addColorStop(0, "rgba(6, 3, 16, 0)"); g.addColorStop(1, "rgba(6, 3, 16, .97)");
+  ctx2d.fillStyle = g; ctx2d.fillRect(x, y + size - fyB, size, fyB);
+  g = ctx2d.createLinearGradient(x, 0, x + fx, 0);
+  g.addColorStop(0, "rgba(9, 5, 22, .94)"); g.addColorStop(1, "rgba(9, 5, 22, 0)");
+  ctx2d.fillStyle = g; ctx2d.fillRect(x, y, fx, size);
+  g = ctx2d.createLinearGradient(x + size - fx, 0, x + size, 0);
+  g.addColorStop(0, "rgba(9, 5, 22, 0)"); g.addColorStop(1, "rgba(9, 5, 22, .94)");
+  ctx2d.fillStyle = g; ctx2d.fillRect(x + size - fx, y, fx, size);
+}
+
 /* ================= canvas: cảnh Đánh Boss ================= */
 function drawBossScene(now, W, H, dt) {
-  // sân cỏ + vòng đấu trường đất
-  const gnd = ctx2d.createLinearGradient(0, H * 0.55, 0, H);
-  gnd.addColorStop(0, "#9ed07e"); gnd.addColorStop(1, "#67a24b");
-  ctx2d.fillStyle = gnd; ctx2d.fillRect(0, H * 0.55, W, H * 0.45);
-  ctx2d.fillStyle = "rgba(146, 104, 58, .45)";
-  ctx2d.beginPath(); ctx2d.ellipse(W * 0.5, H * 0.81, W * 0.47, H * 0.125, 0, 0, Math.PI * 2); ctx2d.fill();
-
   const b = bossState || { hp: 0, max_hp: 1, round: 1, alive: true, rage: 0, rage_max: 200, stun_left: 0 };
   const cx = W * 0.5;
-  // giai đoạn biến hình theo tỉ lệ máu (khớp game.py): 0 thường, 1 rụng răng/khói,
-  // 2 khói + 💢 + 1 mắt đỏ, 3 nứt vỏ + 2 mắt đỏ + run rẩy
+  // giai đoạn biến hình theo tỉ lệ máu (khớp game.py): 0 thường, 1 rụng ăng-ten/hút khói,
+  // 2 khói + 💢 + mắt đỏ, 3 nứt vỏ + 2 mắt đỏ + run rẩy
   const frac = Math.max(0, Math.min(1, b.hp / Math.max(1, b.max_hp)));
   const formStage = !b.alive ? 0 : frac > 0.75 ? 0 : frac > 0.5 ? 1 : frac > 0.25 ? 2 : 3;
-  const bossY = H * 0.46 + Math.sin(now / 620) * H * 0.006;
+
+  // Tàn Ảnh hiện tại; ảnh chưa nạp xong / thiếu file -> fallback vòng cổng + emoji
+  const skinKey = b.skin || "tu";
+  const artImg = bossArtImages[skinKey];
+  const useArt = !!(artImg && artImg.complete && artImg.naturalWidth > 0);
+  const artSize = W * 0.94;
+
   let bossX = cx;
   if (now < bossFx.shakeUntil) bossX += (Math.random() - 0.5) * W * 0.012;
   if (formStage === 3) bossX += (Math.random() - 0.5) * W * 0.005;  // mốc cuối: run lẩy bẩy
+  let bossY;   // tâm thân boss (đuôi hàm dùng để canh số sát thương / đòn bay)
+  let bossR;   // bán kính tham chiếu cho các lớp phủ quanh thân boss
 
-  // (chip + thanh máu + thanh nộ là DOM #bossHud — xem updateBoss)
-
-  // thân boss: Chuột Trùm Răng Sắt khổng lồ + vòng cổng + bánh răng theo vòng đấu
-  const portalR = H * 0.165;
-  ctx2d.save();
-  ctx2d.translate(bossX, bossY);
-  if (!b.alive) { ctx2d.globalAlpha = 0.5; ctx2d.rotate(0.16); }
-  else if (formStage >= 2) ctx2d.rotate(0.03);
-  // vòng cổng đấu trường tím đậm + viền vàng sau lưng boss:
-  // emoji chuột vốn xám nhạt, không có vòng này là boss chìm vào nền trời
-  const portal = ctx2d.createRadialGradient(0, 0, portalR * 0.15, 0, 0, portalR);
-  portal.addColorStop(0, "rgba(74, 42, 128, .95)");
-  portal.addColorStop(0.8, "rgba(46, 24, 84, .94)");
-  portal.addColorStop(1, "rgba(32, 16, 60, .92)");
-  ctx2d.fillStyle = portal;
-  ctx2d.beginPath(); ctx2d.arc(0, 0, portalR, 0, Math.PI * 2); ctx2d.fill();
-  ctx2d.lineWidth = H * 0.0055; ctx2d.strokeStyle = "rgba(255, 211, 77, .95)";
-  ctx2d.beginPath(); ctx2d.arc(0, 0, portalR, 0, Math.PI * 2); ctx2d.stroke();
-  ctx2d.lineWidth = H * 0.002; ctx2d.strokeStyle = "rgba(255, 211, 77, .35)";
-  ctx2d.beginPath(); ctx2d.arc(0, 0, portalR * 1.1, 0, Math.PI * 2); ctx2d.stroke();
-  // mốc 3: vết nứt vỏ chạy ngang vòng cổng
-  if (formStage === 3 && b.alive) {
-    ctx2d.strokeStyle = "rgba(8,4,18,.55)"; ctx2d.lineWidth = 2.5; ctx2d.lineCap = "round";
-    const cracks = [
-      [-0.78, -0.28, -0.34, 0.04, -0.56, 0.46],
-      [0.22, -0.82, 0.44, -0.3, 0.3, 0.18],
-      [0.52, 0.34, 0.86, 0.6],
-    ];
-    for (const c of cracks) {
-      ctx2d.beginPath();
-      ctx2d.moveTo(c[0] * portalR, c[1] * portalR);
-      ctx2d.lineTo(c[2] * portalR, c[3] * portalR);
-      if (c.length > 4) ctx2d.lineTo(c[4] * portalR, c[5] * portalR);
-      ctx2d.stroke();
+  if (useArt) {
+    bossY = H * 0.085 + artSize / 2 + Math.sin(now / 620) * H * 0.006;
+    bossR = artSize / 2;
+    // đấu trường tối + xích vàng nằm sau lưng boss; vòng ma thuật vẽ sau ảnh
+    drawBossArena(now, W, H, cx);
+    drawBossChains(W, H);
+    // thân boss: ảnh Tàn Ảnh lớn hoà mép vào nền, vẫn bob / rung / nghiêng như cũ
+    ctx2d.save();
+    ctx2d.translate(bossX, bossY);
+    if (!b.alive) { ctx2d.globalAlpha = 0.5; ctx2d.rotate(0.16); }
+    else if (formStage >= 2) ctx2d.rotate(0.02);
+    drawBossArt(artImg, -bossR, -bossR, artSize);
+    // mốc 3: vết nứt vỏ chạy ngang thân boss (vẽ đè lên ảnh)
+    if (formStage === 3 && b.alive) {
+      ctx2d.strokeStyle = "rgba(8,4,18,.5)"; ctx2d.lineWidth = 2.5; ctx2d.lineCap = "round";
+      const cracks = [
+        [-0.78, -0.28, -0.34, 0.04, -0.56, 0.46],
+        [0.22, -0.82, 0.44, -0.3, 0.3, 0.18],
+        [0.52, 0.34, 0.86, 0.6],
+      ];
+      for (const c of cracks) {
+        ctx2d.beginPath();
+        ctx2d.moveTo(c[0] * bossR, c[1] * bossR);
+        ctx2d.lineTo(c[2] * bossR, c[3] * bossR);
+        if (c.length > 4) ctx2d.lineTo(c[4] * bossR, c[5] * bossR);
+        ctx2d.stroke();
+      }
     }
-  }
-  // bánh răng tiến hóa theo vòng (2 -> tối đa 5); mốc 1 rụng còn đúng 1 chiếc
-  let gearCount = Math.min(2 + Math.floor((b.round || 1) / 2), 5);
-  if (formStage === 1) gearCount = 1;
-  if (!b.alive) gearCount = Math.min(gearCount, 2);
-  ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
-  for (let i = 0; i < gearCount; i++) {
-    const ang = -Math.PI / 2 + (i - (gearCount - 1) / 2) * 0.46;
-    ctx2d.save();
-    ctx2d.translate(Math.cos(ang) * portalR * 0.84, Math.sin(ang) * portalR * 0.84);
-    ctx2d.rotate((now / 900) * (i % 2 ? -1 : 1));
-    ctx2d.font = `${H * (0.036 + (i % 2) * 0.008)}px serif`;
-    ctx2d.fillText("⚙️", 0, 0);
-    ctx2d.restore();
-  }
-  ctx2d.font = `${H * 0.29}px serif`;
-  ctx2d.fillText("🐭", 0, portalR * 0.06);
-  // mắt đỏ phát sáng: mốc 2 = 1 mắt trái, mốc 3 = cả 2 mắt
-  if (b.alive && formStage >= 2) {
-    ctx2d.save();
-    ctx2d.fillStyle = "rgba(255,45,45,.9)";
-    ctx2d.shadowColor = "#ff2d2d"; ctx2d.shadowBlur = 14;
-    const eyeY = -H * 0.052, eyeDx = H * 0.029, eyeR = H * 0.0075;
-    ctx2d.beginPath(); ctx2d.arc(-eyeDx, eyeY, eyeR, 0, Math.PI * 2); ctx2d.fill();
-    if (formStage >= 3) {
-      ctx2d.beginPath(); ctx2d.arc(eyeDx, eyeY, eyeR, 0, Math.PI * 2); ctx2d.fill();
+    // bánh răng tiến hóa theo vòng (2 -> tối đa 5) viền mép trên của ảnh;
+    // mốc 1 rụng còn đúng 1 chiếc (cơ chế "rụng răng" giữ nguyên trên ảnh)
+    let gearCount = Math.min(2 + Math.floor((b.round || 1) / 2), 5);
+    if (formStage === 1) gearCount = 1;
+    if (!b.alive) gearCount = Math.min(gearCount, 2);
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    for (let i = 0; i < gearCount; i++) {
+      const ang = -Math.PI / 2 + (i - (gearCount - 1) / 2) * 0.42;
+      ctx2d.save();
+      ctx2d.translate(Math.cos(ang) * bossR * 0.93, Math.sin(ang) * bossR * 0.93);
+      ctx2d.rotate((now / 900) * (i % 2 ? -1 : 1));
+      ctx2d.font = `${H * (0.036 + (i % 2) * 0.008)}px serif`;
+      ctx2d.fillText("⚙️", 0, 0);
+      ctx2d.restore();
+    }
+    // mắt đỏ phát sáng mốc >= 2: quầng đỏ mềm đúng vị trí mắt trong ảnh
+    if (b.alive && formStage >= 2) {
+      const eyes = BOSS_ART_EYES[skinKey] || BOSS_ART_EYES.tu;
+      for (const [ex, ey] of eyes) {
+        const gx = (ex - 0.5) * artSize, gy = (ey - 0.5) * artSize, gr = artSize * 0.085;
+        const eg = ctx2d.createRadialGradient(gx, gy, 0, gx, gy, gr);
+        eg.addColorStop(0, "rgba(255,64,54,.5)");
+        eg.addColorStop(0.45, "rgba(255,45,45,.22)");
+        eg.addColorStop(1, "rgba(255,45,45,0)");
+        ctx2d.fillStyle = eg;
+        ctx2d.beginPath(); ctx2d.arc(gx, gy, gr, 0, Math.PI * 2); ctx2d.fill();
+      }
     }
     ctx2d.restore();
+    // vòng ma thuật ôm chân ảnh (vẽ trên quầng mép dưới của ảnh mới rõ)
+    drawMagicCircle(now, W, H, cx, H * 0.085 + artSize + H * 0.014);
+  } else {
+    // ===== fallback khi không có ảnh: sân cỏ + vòng cổng + emoji như bản cũ =====
+    const gnd = ctx2d.createLinearGradient(0, H * 0.55, 0, H);
+    gnd.addColorStop(0, "#9ed07e"); gnd.addColorStop(1, "#67a24b");
+    ctx2d.fillStyle = gnd; ctx2d.fillRect(0, H * 0.55, W, H * 0.45);
+    ctx2d.fillStyle = "rgba(146, 104, 58, .45)";
+    ctx2d.beginPath(); ctx2d.ellipse(W * 0.5, H * 0.81, W * 0.47, H * 0.125, 0, 0, Math.PI * 2); ctx2d.fill();
+
+    bossY = H * 0.46 + Math.sin(now / 620) * H * 0.006;
+    const portalR = H * 0.165;
+    bossR = portalR;
+    ctx2d.save();
+    ctx2d.translate(bossX, bossY);
+    if (!b.alive) { ctx2d.globalAlpha = 0.5; ctx2d.rotate(0.16); }
+    else if (formStage >= 2) ctx2d.rotate(0.03);
+    // vòng cổng đấu trường tím đậm + viền vàng sau lưng boss:
+    // emoji chuột vốn xám nhạt, không có vòng này là boss chìm vào nền trời
+    const portal = ctx2d.createRadialGradient(0, 0, portalR * 0.15, 0, 0, portalR);
+    portal.addColorStop(0, "rgba(74, 42, 128, .95)");
+    portal.addColorStop(0.8, "rgba(46, 24, 84, .94)");
+    portal.addColorStop(1, "rgba(32, 16, 60, .92)");
+    ctx2d.fillStyle = portal;
+    ctx2d.beginPath(); ctx2d.arc(0, 0, portalR, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.lineWidth = H * 0.0055; ctx2d.strokeStyle = "rgba(255, 211, 77, .95)";
+    ctx2d.beginPath(); ctx2d.arc(0, 0, portalR, 0, Math.PI * 2); ctx2d.stroke();
+    ctx2d.lineWidth = H * 0.002; ctx2d.strokeStyle = "rgba(255, 211, 77, .35)";
+    ctx2d.beginPath(); ctx2d.arc(0, 0, portalR * 1.1, 0, Math.PI * 2); ctx2d.stroke();
+    // mốc 3: vết nứt vỏ chạy ngang vòng cổng
+    if (formStage === 3 && b.alive) {
+      ctx2d.strokeStyle = "rgba(8,4,18,.55)"; ctx2d.lineWidth = 2.5; ctx2d.lineCap = "round";
+      const cracks = [
+        [-0.78, -0.28, -0.34, 0.04, -0.56, 0.46],
+        [0.22, -0.82, 0.44, -0.3, 0.3, 0.18],
+        [0.52, 0.34, 0.86, 0.6],
+      ];
+      for (const c of cracks) {
+        ctx2d.beginPath();
+        ctx2d.moveTo(c[0] * portalR, c[1] * portalR);
+        ctx2d.lineTo(c[2] * portalR, c[3] * portalR);
+        if (c.length > 4) ctx2d.lineTo(c[4] * portalR, c[5] * portalR);
+        ctx2d.stroke();
+      }
+    }
+    // bánh răng tiến hóa theo vòng (2 -> tối đa 5); mốc 1 rụng còn đúng 1 chiếc
+    let gearCount = Math.min(2 + Math.floor((b.round || 1) / 2), 5);
+    if (formStage === 1) gearCount = 1;
+    if (!b.alive) gearCount = Math.min(gearCount, 2);
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    for (let i = 0; i < gearCount; i++) {
+      const ang = -Math.PI / 2 + (i - (gearCount - 1) / 2) * 0.46;
+      ctx2d.save();
+      ctx2d.translate(Math.cos(ang) * portalR * 0.84, Math.sin(ang) * portalR * 0.84);
+      ctx2d.rotate((now / 900) * (i % 2 ? -1 : 1));
+      ctx2d.font = `${H * (0.036 + (i % 2) * 0.008)}px serif`;
+      ctx2d.fillText("⚙️", 0, 0);
+      ctx2d.restore();
+    }
+    ctx2d.font = `${H * 0.29}px serif`;
+    ctx2d.fillText("🐭", 0, portalR * 0.06);
+    // mắt đỏ phát sáng: mốc 2 = 1 mắt trái, mốc 3 = cả 2 mắt
+    if (b.alive && formStage >= 2) {
+      ctx2d.save();
+      ctx2d.fillStyle = "rgba(255,45,45,.9)";
+      ctx2d.shadowColor = "#ff2d2d"; ctx2d.shadowBlur = 14;
+      const eyeY = -H * 0.052, eyeDx = H * 0.029, eyeR = H * 0.0075;
+      ctx2d.beginPath(); ctx2d.arc(-eyeDx, eyeY, eyeR, 0, Math.PI * 2); ctx2d.fill();
+      if (formStage >= 3) {
+        ctx2d.beginPath(); ctx2d.arc(eyeDx, eyeY, eyeR, 0, Math.PI * 2); ctx2d.fill();
+      }
+      ctx2d.restore();
+    }
+    ctx2d.restore();
   }
-  ctx2d.restore();
   ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
   // tiến hóa qua vòng: vòng >= 3 đội vương miện, vòng >= 5 thêm chỏm đỏ
   if (b.alive && (b.round || 1) >= 3) {
     ctx2d.font = `${H * 0.05}px serif`;
-    ctx2d.fillText("👑", bossX, bossY - portalR - H * 0.032);
+    ctx2d.fillText("👑", bossX, bossY - bossR - H * 0.032);
   }
   if (b.alive && (b.round || 1) >= 5) {
     ctx2d.font = `${H * 0.03}px serif`;
-    ctx2d.fillText("🔴", bossX + H * 0.052, bossY - portalR - H * 0.02);
+    ctx2d.fillText("🔴", bossX + H * 0.052, bossY - bossR - H * 0.02);
   }
   // khói bốc theo mốc: mốc 1 thưa thớt, mốc 2 vừa, mốc 3 dày đặc
   if (b.alive && formStage >= 1) {
@@ -595,32 +799,54 @@ function drawBossScene(now, W, H, dt) {
       const ph = ((now / (formStage === 3 ? 620 : 1050)) + i * 0.37) % 1;
       ctx2d.save();
       ctx2d.globalAlpha = 0.7 * (1 - ph);
-      ctx2d.fillText("💨", bossX + portalR * 0.42 + i * H * 0.022, bossY - portalR * (0.72 + ph * 0.5));
+      if (useArt) {
+        // có ảnh: khói bốc từ chân ảnh, bay lên dọc thân boss
+        ctx2d.fillText("💨", bossX + artSize * 0.30 + i * H * 0.022, bossY + artSize * 0.30 - ph * H * 0.07);
+      } else {
+        ctx2d.fillText("💨", bossX + bossR * 0.42 + i * H * 0.022, bossY - bossR * (0.72 + ph * 0.5));
+      }
       ctx2d.restore();
     }
   }
   if (b.alive && formStage >= 2) {
     ctx2d.font = `${H * 0.045}px serif`;
-    ctx2d.fillText("💢", bossX - portalR * 0.8, bossY - portalR * 0.84);
+    if (useArt) ctx2d.fillText("💢", bossX - artSize * 0.42, bossY - artSize * 0.40);
+    else ctx2d.fillText("💢", bossX - bossR * 0.8, bossY - bossR * 0.84);
+  }
+  // chớp sáng trắng-tím khi boss đổi Tàn Ảnh (hồi sinh vòng mới / đổi tuỳ chọn)
+  if (now < (bossFx.skinFlashUntil || 0) && b.alive) {
+    const k = Math.max(0, (bossFx.skinFlashUntil - now) / 300);
+    const sg = ctx2d.createRadialGradient(bossX, bossY, 0, bossX, bossY, bossR * 1.08);
+    sg.addColorStop(0, `rgba(238, 230, 255, ${0.5 * k})`);
+    sg.addColorStop(1, "rgba(180, 140, 255, 0)");
+    ctx2d.fillStyle = sg;
+    ctx2d.beginPath(); ctx2d.arc(bossX, bossY, bossR * 1.08, 0, Math.PI * 2); ctx2d.fill();
   }
   // chớp đỏ phủ lên boss khi trúng đòn (vẽ sau thân boss mới thấy được)
   if (now < bossFx.flashUntil && b.alive) {
     ctx2d.save();
     ctx2d.globalAlpha = 0.30 * Math.max(0, (bossFx.flashUntil - now) / 220);
     ctx2d.fillStyle = "#ff3b30";
-    ctx2d.beginPath(); ctx2d.arc(bossX, bossY, portalR * 0.95, 0, Math.PI * 2); ctx2d.fill();
+    if (useArt) {
+      // có ảnh: chớp mềm hình tròn giữa ảnh, tan dần ra mép
+      const fg = ctx2d.createRadialGradient(bossX, bossY, 0, bossX, bossY, bossR * 0.98);
+      fg.addColorStop(0, "rgba(255,59,48,.85)");
+      fg.addColorStop(1, "rgba(255,59,48,0)");
+      ctx2d.fillStyle = fg;
+    }
+    ctx2d.beginPath(); ctx2d.arc(bossX, bossY, bossR * 0.95, 0, Math.PI * 2); ctx2d.fill();
     ctx2d.restore();
   }
   if (!b.alive) {
     ctx2d.font = `${H * 0.05}px serif`;
-    ctx2d.fillText("💫", bossX, bossY - portalR * 0.95);
+    ctx2d.fillText("💫", bossX, bossY - bossR * 0.95);
   } else if ((b.stun_left || 0) > 0) {
     const a = now / 300;
     ctx2d.font = `${H * 0.045}px serif`;
-    ctx2d.fillText("💫", bossX + Math.cos(a) * portalR * 0.55, bossY - portalR * 0.98 + Math.sin(a) * H * 0.012);
+    ctx2d.fillText("💫", bossX + Math.cos(a) * bossR * 0.55, bossY - bossR * 0.98 + Math.sin(a) * H * 0.012);
     ctx2d.fillStyle = "#fff";
     ctx2d.font = `800 ${H * 0.016}px sans-serif`;
-    ctx2d.fillText(`CHOÁNG ${b.stun_left}s — cào đau x2!`, bossX, bossY - portalR - H * 0.038);
+    ctx2d.fillText(`CHOÁNG ${b.stun_left}s — cào đau x2!`, bossX, bossY - bossR - H * 0.038);
   }
 
   // dọn hiệu ứng đã cũ
@@ -632,8 +858,8 @@ function drawBossScene(now, W, H, dt) {
     ctx2d.font = `${H * 0.05}px serif`;
     for (let i = 0; i < 7; i++) {
       const a = (i / 7) * Math.PI * 2 + now / 240;
-      const rx = bossX + Math.cos(a) * portalR * 0.88;
-      const ry = bossY + Math.sin(a) * portalR * 0.5 + Math.sin(now / 130 + i) * 4;
+      const rx = bossX + Math.cos(a) * bossR * (useArt ? 1.06 : 0.88);
+      const ry = bossY + Math.sin(a) * bossR * (useArt ? 0.62 : 0.5) + Math.sin(now / 130 + i) * 4;
       ctx2d.fillText("🐱", rx, ry);
     }
   }
@@ -647,10 +873,10 @@ function drawBossScene(now, W, H, dt) {
     ctx2d.strokeStyle = "rgba(146, 104, 58, .85)";
     ctx2d.lineWidth = H * 0.016; ctx2d.lineCap = "round";
     const a0 = Math.PI * (0.08 + counterProg * 0.35);
-    ctx2d.beginPath(); ctx2d.arc(0, 0, portalR * 1.5, a0, a0 + Math.PI * 0.34); ctx2d.stroke();
+    ctx2d.beginPath(); ctx2d.arc(0, 0, bossR * (useArt ? 1.18 : 1.5), a0, a0 + Math.PI * 0.34); ctx2d.stroke();
     ctx2d.fillStyle = "#fff";
     ctx2d.font = `800 ${H * 0.016}px sans-serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
-    ctx2d.fillText("Quét đuôi nè!", 0, portalR * 1.32);
+    ctx2d.fillText("Quét đuôi nè!", 0, bossR * (useArt ? 1.04 : 1.32));
     ctx2d.restore();
   }
 
@@ -1036,8 +1262,8 @@ function handle(msg) {
     case "boss_respawn":
       bossBannerMode = "";
       $("bossBanner").classList.add("hidden");
-      ticker(`🐭 Boss hồi sinh vòng ${msg.round} — máu ${msg.max_hp}!`);
-      logEvent(`🐭 Boss hồi sinh vòng ${msg.round}`);
+      ticker(`🐭 Boss hồi sinh vòng ${msg.round}${msg.skin_name ? ` — hiện hình ${msg.skin_name}` : ""} — máu ${msg.max_hp}!`);
+      logEvent(`🐭 Boss hồi sinh vòng ${msg.round}${msg.skin_name ? ` (${msg.skin_name})` : ""}`);
       break;
   }
 }

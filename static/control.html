@@ -34,6 +34,16 @@
       <input id="bossMaxHp" type="number" min="100" max="100000" step="100">
     </label>
     <label class="check"><input id="bossTaunts" type="checkbox" checked> Boss chửi lại (Răng Sắt buông thoại châm chọc khi bị đánh đau / dội mưa cá / gọi đoàn trợ trận)</label>
+    <label>Tàn ảnh boss (màu pha lê hiện hình của Răng Sắt)
+      <select id="bossSkin">
+        <option value="auto">Tự động theo vòng (Tử → Băng → Lục → Hỏa → Kim)</option>
+        <option value="tu">Tử Quang</option>
+        <option value="bang">Băng Quang</option>
+        <option value="luc">Lục Quang</option>
+        <option value="hoa">Hỏa Quang</option>
+        <option value="kim">Kim Quang</option>
+      </select>
+    </label>
     <p class="hint">Chế độ <b>Đánh Boss</b>: cả phòng gõ <b>CÀO</b> để tấn công Chuột Trùm Răng Sắt (5 mèo cùng cào trong 3 giây = <b>Đòn đồng loạt x2</b>), thả tim nạp thanh Nộ (đầy = mưa cá trút xuống boss), boss gục thì 15 giây sau hồi sinh với máu +20% mỗi vòng.</p>
     <button id="saveConfig">💾 Lưu cài đặt</button>
   </section>

@@ -175,6 +175,25 @@ BOSS_TAUNTS_IDLE = [
 ]
 
 
+# Tàn Ảnh của Răng Sắt: mỗi vòng đấu, boss hiện hình một màu pha lê khác nhau
+# (ảnh AI nhúng ở static/boss-art.js; sân khấu tra theo khoá skin).
+SKINS = {
+    "tu": "TỬ QUANG",
+    "bang": "BĂNG QUANG",
+    "luc": "LỤC QUANG",
+    "hoa": "HỎA QUANG",
+    "kim": "KIM QUANG",
+}
+# Tự động theo vòng: 1 Tử -> 2 Băng -> 3 Lục -> 4 Hỏa -> từ 5 trở đi Kim.
+ROUND_SKINS = ["tu", "bang", "luc", "hoa", "kim"]
+
+
+def boss_skin_for_round(round_no: int) -> str:
+    """Khoá Tàn Ảnh của một vòng đấu (vòng >= 5 giữ Kim Quang)."""
+    idx = min(max(int(round_no), 1), len(ROUND_SKINS)) - 1
+    return ROUND_SKINS[idx]
+
+
 class GameState:
     MAX_SEATS = 120
     FEED_COOLDOWN = 5.0        # giây, chống spam cho ăn / cho ăn quá độ
@@ -195,7 +214,8 @@ class GameState:
 
     def __init__(self, like_goal: int = 500, scores_path: Optional[str] = None,
                  rng: Optional[random.Random] = None, stage_mode: str = "run",
-                 boss_max_hp: int = 1000, boss_taunts: bool = True) -> None:
+                 boss_max_hp: int = 1000, boss_taunts: bool = True,
+                 boss_skin: str = "auto") -> None:
         self.players: Dict[str, Player] = {}
         self.like_goal = like_goal
         self.likes_since_rain = 0
@@ -218,6 +238,8 @@ class GameState:
         self._boss_spawn_spoken = False            # chống lặp câu chào boss mỗi snapshot
         # --- boss v2: thoại / biến hình / đồng loạt / hạng / phản đòn ---
         self.boss_taunts = bool(boss_taunts)       # công tắc "Boss chửi lại"
+        # Tàn Ảnh: "auto" = đổi màu theo vòng đấu; khoá skin = luôn dùng màu đó
+        self.boss_skin_pref = boss_skin if boss_skin in SKINS else "auto"
         self._boss_stage_now = 0                  # giai đoạn biến hình hiện tại (0..3)
         self._boss_taunted: set = set()            # giai đoạn đã chửi ở vòng này
         self.claw_window: List = []                # [(uid, mono_ts)] cửa sổ trượt ĐỒNG LOẠT
@@ -230,13 +252,27 @@ class GameState:
         self._load_scores()
 
     # ------------------------------------------------------------- chế độ boss
+    def set_boss_skin(self, pref: Optional[str]) -> None:
+        """Đặt tuỳ chọn Tàn Ảnh: "auto" (theo vòng) hoặc một khoá trong SKINS."""
+        if pref == "auto" or pref in SKINS:
+            self.boss_skin_pref = pref
+
+    def current_boss_skin(self) -> str:
+        """Khoá Tàn Ảnh đang hiển thị: tuỳ chọn cố định thắng, không thì theo vòng."""
+        if self.boss_skin_pref in SKINS:
+            return self.boss_skin_pref
+        return boss_skin_for_round(self.boss.round)
+
     def set_stage_mode(self, mode: str, boss_max_hp: Optional[int] = None,
-                       boss_taunts: Optional[bool] = None) -> None:
+                       boss_taunts: Optional[bool] = None,
+                       boss_skin: Optional[str] = None) -> None:
         """Đổi chế độ sân khấu (run <-> boss) + áp máu boss / công tắc thoại từ config."""
         if mode not in ("run", "boss"):
             return
         if boss_taunts is not None:
             self.boss_taunts = bool(boss_taunts)
+        if boss_skin is not None:
+            self.set_boss_skin(boss_skin)
         if mode == "boss" and self.stage_mode != "boss":
             self._boss_spawn_spoken = False  # lần tick tới sẽ xướng boss xuất hiện
             self._boss_stage_now = 0
@@ -392,8 +428,11 @@ class GameState:
             now_mono = self._now_mono if self._now_mono else time.monotonic()
             self.claw_window = [(u, t) for (u, t) in self.claw_window
                                 if now_mono - t <= self.SYNC_WINDOW]
+            skin = self.current_boss_skin()
             snap["boss"] = {
                 "name": Boss.NAME,
+                "skin": skin,
+                "skin_name": SKINS[skin],
                 "hp": self.boss.hp,
                 "max_hp": self.boss.max_hp,
                 "round": self.boss.round,
@@ -756,11 +795,13 @@ class GameState:
                 self.boss.stun_until = 0.0
                 self._boss_stage_now = 0      # vòng mới: biến hình + thoại mốc làm lại
                 self._boss_taunted = set()
+                skin = self.current_boss_skin()
                 effects.append({
                     "type": "boss_respawn",
                     "round": self.boss.round, "max_hp": self.boss.max_hp,
                     "hp": self.boss.hp,
-                    "speak": f"Chuột Trùm Răng Sắt hồi sinh vòng {self.boss.round}, trâu hơn rồi! Cả nhà gõ CÀO tấn công tiếp nha!",
+                    "skin": skin, "skin_name": SKINS[skin],
+                    "speak": f"Vòng {self.boss.round} — Chuột Trùm Răng Sắt hiện hình {SKINS[skin]}! Máu trâu hơn rồi, cả nhà gõ CÀO tấn công tiếp nha!",
                     "speak_priority": 1,
                 })
             if self.boss.alive:

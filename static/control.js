@@ -19,6 +19,7 @@ fetch("/api/config").then((r) => r.json()).then((cfg) => {
   $("rainSeconds").value = cfg.rain_seconds || 30;
   $("bossMaxHp").value = cfg.boss_max_hp || 1000;
   if (typeof cfg.boss_taunts === "boolean") $("bossTaunts").checked = cfg.boss_taunts;
+  $("bossSkin").value = cfg.boss_skin || "auto";
   setModeUI(cfg.stage_mode || "run");
   if (typeof cfg.meow_enabled === "boolean") $("meowEnabled").checked = cfg.meow_enabled;
   if (cfg.vbee_app_id) $("vbeeAppId").value = cfg.vbee_app_id;
@@ -213,6 +214,10 @@ $("bossTaunts").onchange = async () => {
   await post("/api/config", { boss_taunts: $("bossTaunts").checked });
   log("Boss chửi lại: " + ($("bossTaunts").checked ? "BẬT" : "TẮT"));
 };
+$("bossSkin").onchange = async () => {
+  await post("/api/config", { boss_skin: $("bossSkin").value });
+  log("Tàn ảnh boss: " + $("bossSkin").selectedOptions[0].textContent);
+};
 
 $("saveConfig").onclick = async () => {
   await post("/api/config", {
@@ -222,6 +227,7 @@ $("saveConfig").onclick = async () => {
     rain_seconds: Number($("rainSeconds").value) || 30,
     boss_max_hp: Number($("bossMaxHp").value) || 1000,
     boss_taunts: $("bossTaunts").checked,
+    boss_skin: $("bossSkin").value,
   });
   log("Đã lưu cài đặt");
 };
@@ -256,5 +262,5 @@ ws.onmessage = (ev) => {
   else if (msg.type === "race_finish") log("🏆 " + msg.winner.nickname + " thắng đua mèo");
   else if (msg.type === "rain") log("🌧️🐟 Mưa cá!");
   else if (msg.type === "boss_down") log("🐭🎉 Boss gục vòng " + msg.round + " — đòn cuối: " + (msg.final_blow ? msg.final_blow.name : ""));
-  else if (msg.type === "boss_respawn") log("🐭 Boss hồi sinh vòng " + msg.round + " (máu " + msg.max_hp + ")");
+  else if (msg.type === "boss_respawn") log("🐭 Boss hồi sinh vòng " + msg.round + (msg.skin_name ? " — hiện hình " + msg.skin_name : "") + " (máu " + msg.max_hp + ")");
 };

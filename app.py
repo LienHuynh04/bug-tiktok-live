@@ -54,6 +54,9 @@ DEFAULT_CONFIG = {
     "stage_mode": "run",
     "boss_max_hp": 1000,
     "boss_taunts": True,    # boss chửi lại: thoại châm chọc theo mốc máu / khi bị dội đòn
+    # Tàn Ảnh boss: "auto" = đổi màu theo vòng (Tử -> Băng -> Lục -> Hỏa -> Kim),
+    # hoặc khoá một màu: "tu" | "bang" | "luc" | "hoa" | "kim"
+    "boss_skin": "auto",
 }
 
 # Preset giọng đặt nhanh ở trang điều khiển
@@ -643,7 +646,8 @@ def build_app() -> web.Application:
     game = GameState(like_goal=int(cfg.get("like_goal", 500)), scores_path=SCORES_PATH,
                      stage_mode=str(cfg.get("stage_mode", "run")),
                      boss_max_hp=int(cfg.get("boss_max_hp", 1000)),
-                     boss_taunts=bool(cfg.get("boss_taunts", True)))
+                     boss_taunts=bool(cfg.get("boss_taunts", True)),
+                     boss_skin=str(cfg.get("boss_skin", "auto")))
     hub = Hub()
     state = {"connected": False, "message": "Chưa kết nối TikTok"}
 
@@ -761,8 +765,11 @@ def build_app() -> web.Application:
                 pass
         if body.get("boss_taunts") is not None:
             cfg_now["boss_taunts"] = bool(body["boss_taunts"])
+        if body.get("boss_skin") in ("auto", "tu", "bang", "luc", "hoa", "kim"):
+            cfg_now["boss_skin"] = body["boss_skin"]
         game.set_stage_mode(cfg_now["stage_mode"], int(cfg_now["boss_max_hp"]),
-                            bool(cfg_now.get("boss_taunts", True)))
+                            bool(cfg_now.get("boss_taunts", True)),
+                            str(cfg_now.get("boss_skin", "auto")))
         save_config(cfg_now)
         pub = public_config(cfg_now)  # không phát token Vbee qua WS/response
         await hub.broadcast({"type": "config", **pub, "app_version": APP_VERSION})

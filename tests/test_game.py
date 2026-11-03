@@ -296,6 +296,44 @@ def run():
     gc2._last_counter_at = time.time() - 41
     assert not any(e["type"] == "boss_counter" for e in gc2.tick())
 
+    # ================= Boss v2: TÀN ẢNH theo vòng / tuỳ chọn cố định =================
+    from game import SKINS, boss_skin_for_round  # noqa: E402
+    # ánh xạ vòng -> skin: 1 Tử, 2 Băng, 3 Lục, 4 Hỏa, 5+ Kim
+    assert [boss_skin_for_round(r) for r in (1, 2, 3, 4, 5, 6)] == \
+        ["tu", "bang", "luc", "hoa", "kim", "kim"]
+    assert SKINS == {"tu": "TỬ QUANG", "bang": "BĂNG QUANG", "luc": "LỤC QUANG",
+                     "hoa": "HỎA QUANG", "kim": "KIM QUANG"}
+    # snapshot (boss_state) luôn kèm skin + skin_name, mặc định auto -> theo vòng
+    gskin = GameState(like_goal=10, rng=random.Random(59))
+    gskin.set_stage_mode("boss", 100)
+    snap = gskin.snapshot()["boss"]
+    assert snap["skin"] == "tu" and snap["skin_name"] == "TỬ QUANG"
+    # hồi sinh sang vòng 2 -> tự đổi sang Băng Quang, câu xướng có tên Tàn Ảnh
+    gskin.handle_gift("sk1", "Mèo Hạ Boss", "Sư tử", 100)   # 200 dmg -> gục (100 máu)
+    assert not gskin.boss.alive
+    gskin.boss.respawn_at = time.time() - 1
+    eff = gskin.tick()
+    resp = [e for e in eff if e["type"] == "boss_respawn"]
+    assert resp and resp[0]["round"] == 2
+    assert resp[0]["skin"] == "bang" and resp[0]["skin_name"] == "BĂNG QUANG"
+    assert "BĂNG QUANG" in resp[0]["speak"]
+    snap = gskin.snapshot()["boss"]
+    assert snap["skin"] == "bang" and snap["skin_name"] == "BĂNG QUANG"
+    # tuỳ chọn cố định thắng vòng đấu: đang vòng 2 vẫn giữ Kim Quang
+    gfix = GameState(like_goal=10, rng=random.Random(61), boss_skin="kim")
+    gfix.set_stage_mode("boss", 1000)
+    gfix.boss.round = 2
+    assert gfix.current_boss_skin() == "kim"
+    snap = gfix.snapshot()["boss"]
+    assert snap["skin"] == "kim" and snap["skin_name"] == "KIM QUANG"
+    # đổi tuỳ chọn qua set_stage_mode (đường trang điều khiển) + giá trị lạ bị bỏ qua
+    gfix.set_stage_mode("boss", 1000, None, "hoa")
+    assert gfix.current_boss_skin() == "hoa"
+    gfix.set_boss_skin("khong-ton-tai")
+    assert gfix.current_boss_skin() == "hoa"
+    gfix.set_boss_skin("auto")
+    assert gfix.current_boss_skin() == "bang"   # về auto -> vòng 2 = Băng Quang
+
     print("✅ Tất cả test game đều PASS")
 
 
