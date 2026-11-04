@@ -16,7 +16,10 @@
     <p id="titleGarden">🌿 VƯỜN MÈO • Mỗi mèo một tính cách • Gõ lệnh là mèo phản ứng theo tính cách</p>
     <p id="titleMiner">⛏️ ĐÀO VÀNG PK • Gõ MÈO/CHUỘT vào đội • ĐÀO để thả móc • ❤️ Đủ tim → NỔ MÌN</p>
     <p id="titleTug">🪢 KÉO CO • Gõ CAM/XÁM vào đội • KÉO kéo dây • HÒ lấy sức</p>
+    <p id="titleOffice">🏢 SẾP ĐI RỒI! • Canh sếp phân tâm mà lén • Bị bắt là đứng góc phạt</p>
   </header>
+
+  <div id="officeStateBanner" class="st-patrol"><span id="officeStateText">🚶 Sếp đang đi tuần…</span></div>
 
   <aside id="statsPanel" class="panel">
     <div class="stat-row">⭐ <span id="statStars">0</span></div>
@@ -112,6 +115,23 @@
     </ul>
   </section>
 
+  <section id="officeBoard" class="panel">
+    <h2>🏢 VĂN PHÒNG CỦA BUG</h2>
+    <div id="officeShiftLine">🏢 CA 1 • còn 180s</div>
+    <ul>
+      <li>🍜 <b>"ăn"</b>: ăn vụng</li>
+      <li>💬 <b>"chat"</b>: tám với bàn bên</li>
+      <li>🎮 <b>"game"</b>: chơi game lén</li>
+      <li>🐱 <b>"bug"</b>: cho Bug ăn khi nó tới bàn</li>
+      <li>💻 <b>"làm"</b>: giả vờ chăm chỉ, hạ nghi</li>
+      <li>😴 <b>"ngủ"</b>: ngủ gật một lát</li>
+    </ul>
+    <div class="office-bar-line"><span id="officeFundText">🎉 Quỹ ăn vụng 0/500</span></div>
+    <div class="office-bar"><div id="officeFundFill"></div></div>
+    <div class="office-bar-line"><span id="officeCoffeeText">☕ Rót cà phê cho sếp 0/200</span></div>
+    <div class="office-bar"><div id="officeCoffeeFill"></div></div>
+  </section>
+
   <div id="bossHud">
     <div id="bossChip">🐭 <span id="bossName">CHUỘT TRÙM RĂNG SẮT</span> — Vòng <span id="bossRound">1</span></div>
     <div class="boss-hp-bar"><div id="bossHpFill"></div><span id="bossHpText">1000 / 1000</span></div>
@@ -122,6 +142,7 @@
   </div>
 
   <div id="bossTaunt" class="hidden"></div>
+  <div id="officeBubble" class="hidden"></div>
   <div id="bossSyncFlash" class="hidden">⚡ ĐÒN ĐỒNG LOẠT ×2!</div>
 
   <aside id="rankPanel" class="panel">
@@ -151,6 +172,11 @@
     <ol id="tugTopList"></ol>
   </aside>
 
+  <aside id="officeTop" class="panel">
+    <h2>🏆 TOP LÉN LÚT</h2>
+    <ol id="officeTopList"></ol>
+  </aside>
+
   <div id="minerBanner" class="hidden">
     <div id="minerBannerTitle">🏆 HẾT HIỆP!</div>
     <div id="minerBannerSub"></div>
@@ -159,6 +185,11 @@
   <div id="tugBanner" class="hidden">
     <div id="tugBannerTitle">🏆 HẾT HIỆP!</div>
     <div id="tugBannerSub"></div>
+  </div>
+
+  <div id="officeBanner" class="hidden">
+    <div id="officeBannerTitle">📋 TỔNG KẾT CA!</div>
+    <div id="officeBannerSub"></div>
   </div>
 
   <div id="bossBanner" class="hidden">

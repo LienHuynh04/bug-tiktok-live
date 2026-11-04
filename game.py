@@ -117,6 +117,15 @@ class Player:
     stamina: float = 100.0          # thể lực kéo co: 0..100, kéo tốn sức
     last_tug_at: float = 0.0        # cooldown lệnh KÉO (monotonic)
     last_cheer_at: float = 0.0      # cooldown lệnh HÒ (monotonic)
+    # --- Văn Phòng Lén Lút ---
+    office_pts: int = 0             # điểm lén trong ca hiện tại
+    office_pts_total: int = 0       # điểm lén cộng dồn cả phiên (đua TOP)
+    suspicion: float = 0.0          # mức bị sếp để ý: 0..100 (>= 100 -> bị bắt)
+    penalty_until: float = 0.0      # mốc wall-clock hết đứng góc phạt
+    office_act: str = ""            # hành động lén gần nhất (sân khấu diễn hoạt)
+    office_act_until: float = 0.0   # mốc wall-clock hết hiệu ứng hành động (~2.5s)
+    caught_round: int = 0           # số lần bị bắt trong ca hiện tại
+    last_office: Dict[str, float] = field(default_factory=dict)  # cooldown từng hành động (monotonic)
 
     def eff_speed_mode(self, now_mono: float) -> str:
         if self.speed_mode != "normal" and now_mono >= self.speed_until:
@@ -167,6 +176,16 @@ class Player:
             "tug_force": round(self.tug_force, 1),
             "stamina": round(self.stamina),
             "tired": self.stamina < TUG_TIRED_UNDER,
+            # --- Văn Phòng Lén Lút ---
+            "desk": self.seat % OFFICE_DESKS,
+            "office_pts": self.office_pts,
+            "office_pts_total": self.office_pts_total,
+            "suspicion": round(self.suspicion),
+            "penalty_left": (max(0, round(self.penalty_until - now_wall))
+                             if self.penalty_until else 0),
+            "action": self.office_act if now_wall < self.office_act_until else "",
+            "action_left": (max(0, round(self.office_act_until - now_wall))
+                            if now_wall < self.office_act_until else 0),
         }
 
 
@@ -320,6 +339,13 @@ IDLE_TUG = ("Cả nhà ơi, hội kéo co làng Bug đang sôi! Gõ CAM hoặc X
             "gõ KÉO kéo dây, gõ HÒ DÔ lấy khí thế cho đội mình nha! Kéo phải giữ sức — "
             "mèo đuối sức là kéo yếu hẳn đó. Thả tim đủ mốc là trống hội nổi lên, "
             "cả hai đội kéo mạnh hẳn!")
+OPENING_OFFICE = ("Chào cả nhà đến với văn phòng của Bug! Sếp Răng Sắt đi tuần liên tục — "
+                  "canh lúc sếp đi pha cà phê mà ăn vụng, nói chuyện, chơi game lén nha! "
+                  "Bị bắt là ra đứng góc phạt đó. Thả tim rót cà phê cho sếp đi nghỉ nào!")
+IDLE_OFFICE = ("Cả nhà ơi, văn phòng đang giờ làm — sếp Răng Sắt đi tuần liên tục đó! "
+               "Gõ ĂN ăn vụng, CHAT nói chuyện, GAME chơi lén, BUG cho Bug ăn, "
+               "LÀM giả vờ gõ phím cho đỡ bị để ý nha. Canh lúc sếp xao lãng là điểm "
+               "nhân đôi. Thả tim đủ 200 là sếp phải đi nghỉ pha cà phê 15 giây!")
 
 # --- Đào Vàng PK: 2 đội móc vàng thi đấu theo hiệp ---------------------------
 # Trường mỏ dùng toạ độ chuẩn hoá 0..1 (x theo chiều ngang sân khấu, y từ trên
@@ -374,6 +400,49 @@ TUG_COMEBACK_FACTOR = 1.25     # -> hệ số lội ngược dòng
 TUG_DRUMS_SECONDS = 15         # trống hội: cả 2 đội x1.5 trong 15s
 TUG_DRUMS_MULT = 1.5
 TUG_SUPER_YANK = 12.0          # giật siêu cấp (quà >= 100 kim cương): dây nhảy 12
+
+# --- Văn Phòng Lén Lút: sếp tuần tra, cấm ăn uống ---------------------------
+# Cả phòng HỢP TÁC chống sếp: nhân viên mèo lén ăn vụng / nói chuyện / chơi
+# game lấy điểm; sếp Răng Sắt (mặc vest) đi tuần qua lại, dừng lại QUÉT MẮT
+# là lúc nguy hiểm nhất. Canh sếp xao lãng (pha cà phê / nghe điện thoại /
+# ngắm cửa sổ / tiệc / bánh) thì điểm NHÂN ĐÔI và không ai bị bắt.
+OFFICE_DESKS = 8               # số bàn trong văn phòng (bàn của người chơi = ghế % 8)
+OFFICE_FUND_GOAL = 500         # quỹ ăn vụng đủ 500 -> TIỆC VĂN PHÒNG 20s
+OFFICE_COFFEE_GOAL = 200       # đủ 200 tim -> sếp buộc đi nghỉ pha cà phê 15s
+OFFICE_SHIFT_SECONDS = 180     # 1 ca làm việc
+OFFICE_SUMMARY_SECONDS = 12    # nghỉ tổng kết giữa 2 ca
+OFFICE_ACTION_COOLDOWN = 2.0   # giây, chống spam theo TỪNG hành động (monotonic)
+OFFICE_PENALTY_SECONDS = 20    # bị bắt -> đứng góc phạt 20s
+OFFICE_BOSS_SPEED = 0.07       # tốc độ sếp đi tuần (đơn vị trục x 0..1 / giây)
+OFFICE_DISTRACT_KINDS = ["coffee", "phone", "window"]  # xao lãng TỰ NHIÊN, xoay vòng
+OFFICE_DISTRACT_PHRASES = {"coffee": "pha cà phê", "phone": "nghe điện thoại",
+                           "window": "ngắm cửa sổ"}
+# Hành động lén: điểm gốc + hệ số rủi ro (chỉ nguy hiểm khi sếp KHÔNG xao lãng;
+# lúc sếp quét mắt (watch) rủi ro x0.55, lúc đi tuần (patrol) chỉ x0.18, và còn
+# nhân hệ số gần-xa theo vị trí sếp so với cột bàn của người chơi).
+OFFICE_ACTIONS = {
+    "eat":  {"pts": 10, "risk": 0.50},   # ĂN: ăn vụng
+    "chat": {"pts": 8,  "risk": 0.65},   # CHAT: nói chuyện với bạn cùng bàn
+    "game": {"pts": 16, "risk": 0.90},   # GAME: chơi game lén (điểm cao, rủi ro cao)
+    "work": {"pts": 2,  "risk": 0.0},    # LÀM: giả vờ gõ phím (an toàn, hạ nghi ngờ)
+    "nap":  {"pts": 6,  "risk": 0.55},   # NGỦ: ngủ gật tại bàn
+}
+OFFICE_TEXT_TO_ACTION = {
+    "an": "eat", "an vung": "eat", "an com": "eat", "an banh": "eat",
+    "chat": "chat", "noi chuyen": "chat", "tam": "chat",
+    "game": "game", "choi game": "game",
+    "bug": "bug",
+    "lam": "work", "lam viec": "work", "go phim": "work",
+    "ngu": "nap", "ngu gat": "nap", "buon ngu": "nap",
+}
+# Thoại mắng của Sếp Răng Sắt khi bắt quả tang — viết riêng cho văn phòng này.
+OFFICE_SCOLDS = [
+    "Ai ăn vụng đó?! Ta ngửi thấy mùi mì tôm!",
+    "Làm việc đi! Ta thấy hết đấy!",
+    "Ra góc đứng! Chưa hết giờ làm đâu!",
+    "Văn phòng là chỗ làm việc, không phải quán ăn!",
+    "Ta nhắc lần cuối: cất hết đồ ăn đi!",
+]
 
 # --- Thoại tâm trạng của Bug (xoay vòng cho đỡ lặp) ---
 OVERFEED_LINES = [
@@ -434,8 +503,8 @@ class GameState:
         self.scores_path = scores_path
         self.rng = rng or random.Random()
         self._next_seat = 0
-        # --- chế độ sân khấu: run | boss | garden | miner | tug ---
-        self.stage_mode = stage_mode if stage_mode in ("run", "boss", "garden", "miner", "tug") else "run"
+        # --- chế độ sân khấu: run | boss | garden | miner | tug | office ---
+        self.stage_mode = stage_mode if stage_mode in ("run", "boss", "garden", "miner", "tug", "office") else "run"
         # --- Vườn Mèo ---
         self.garden_hearts = 0             # tim vườn đã gom trong phiên
         self.garden_hearts_goal = 1000     # đủ mốc này -> Giờ Vàng (rồi mốc +1000)
@@ -483,6 +552,27 @@ class GameState:
         self._tug_last_pull_wall = 0.0           # mốc wall-clock cú kéo gần nhất
         self._tug_reach: Dict[str, float] = {}   # uid -> mốc đạt lực hiệp (chọn MVP)
         self._tug_last_join_speak = -100.0       # throttle đọc tin vào đội (monotonic)
+        # --- Văn Phòng Lén Lút: máy trạng thái sếp + quỹ/cà phê/ca làm; đồng
+        # hồ hẹn LƯỜI (lazy) như mỏ/kéo co để các chế độ khác không đổi rng ---
+        self._office_ready = False
+        self.ob_state = "patrol"          # patrol | watch | distracted | party | coffee | cake
+        self.ob_kind = ""                 # loại xao lãng tự nhiên: coffee | phone | window
+        self.ob_x = 0.5                   # vị trí sếp trên trục ngang sân khấu (0..1)
+        self.ob_dir = 1                   # hướng sếp đang đi: -1 (trái) | +1 (phải)
+        self.ob_deadline = 0.0            # mốc wall-clock hết trạng thái sếp hiện tại
+        self._office_kind_idx = 0         # xoay vòng loại xao lãng tự nhiên
+        self.office_fund = 0              # quỹ ăn vụng của cả phòng (đủ 500 -> tiệc)
+        self.office_party_until = 0.0     # mốc wall-clock tiệc văn phòng còn mở
+        self.office_coffee_likes = 0      # tim rót cà phê cho sếp (đủ 200 -> sếp nghỉ 15s)
+        self.office_shift = 1             # số thứ tự ca làm việc
+        self.office_phase = "play"        # play | summary (tổng kết ca)
+        self.office_deadline = 0.0        # mốc wall-clock hết pha ca hiện tại
+        self.office_bug_desk = 0          # bàn Bug đang nằm lang thang (0..7)
+        self.office_bug_move_at = 0.0     # mốc wall-clock Bug đổi bàn lần tới
+        self.office_bug_target_desk: Optional[int] = None  # bàn có người vừa gọi Bug tới
+        self._office_last_tick_at: Optional[float] = None
+        self._office_reach: Dict[str, float] = {}  # uid -> mốc đạt điểm ca (chọn người điểm cao nhất)
+        self._office_last_feedbug_speak = -100.0   # throttle câu cảm ơn khi cho Bug ăn (monotonic)
         self.boss = Boss(boss_max_hp)
         self.damage_by_user: Dict[str, int] = {}   # sát thương cộng dồn trong phiên
         self.boss_total_damage = 0                 # gồm cả sát thương mưa cá (cả đội)
@@ -507,6 +597,8 @@ class GameState:
             self._miner_ensure()
         if self.stage_mode == "tug":
             self._tug_ensure()
+        if self.stage_mode == "office":
+            self._office_ensure()
 
     # ------------------------------------------------------------- chế độ boss
     def set_boss_skin(self, pref: Optional[str]) -> None:
@@ -531,6 +623,8 @@ class GameState:
             return OPENING_MINER
         if self.stage_mode == "tug":
             return OPENING_TUG
+        if self.stage_mode == "office":
+            return OPENING_OFFICE
         return OPENING_RUN
 
     def idle_line(self) -> str:
@@ -543,6 +637,8 @@ class GameState:
             return IDLE_MINER
         if self.stage_mode == "tug":
             return IDLE_TUG
+        if self.stage_mode == "office":
+            return IDLE_OFFICE
         return IDLE_RUN
 
     # ------------------------------------------------------- Đào Vàng PK
@@ -1013,6 +1109,288 @@ class GameState:
                 effects += self._tug_end_round(now_wall)
         return effects
 
+    # ------------------------------------------------------- Văn Phòng Lén Lút
+    def _office_ensure(self) -> None:
+        """Dựng đồng hồ sếp + ca làm lần đầu vào chế độ văn phòng (lazy)."""
+        if self._office_ready:
+            return
+        self._office_ready = True
+        now_wall = time.time()
+        self.ob_state = "patrol"
+        self.ob_kind = ""
+        self.ob_deadline = now_wall + self.rng.uniform(8, 14)
+        self.office_deadline = now_wall + OFFICE_SHIFT_SECONDS
+        self.office_bug_desk = self.rng.randrange(OFFICE_DESKS)
+        self.office_bug_move_at = now_wall + self.rng.uniform(12, 20)
+
+    def _office_is_safe(self, now_wall: Optional[float] = None) -> bool:
+        """An toàn = sếp đang xao lãng (tự nhiên / cà phê / bánh / tiệc):
+        hành động lén không bị bắt và điểm nhân đôi."""
+        now_wall = time.time() if now_wall is None else now_wall
+        return (self.ob_state in ("distracted", "party", "coffee", "cake")
+                or now_wall < self.office_party_until)
+
+    @staticmethod
+    def _office_desk_x(desk: int) -> float:
+        """Trục x của cột bàn: bàn chẵn (cột trái) 0.30, bàn lẻ (cột phải) 0.70."""
+        return 0.30 if desk % 2 == 0 else 0.70
+
+    def _office_boss_advance(self, now_wall: float) -> List[dict]:
+        """Hết giờ một trạng thái sếp -> chuyển trạng thái kế:
+        patrol -> watch -> (45% xao lãng tự nhiên | quay lại patrol) -> patrol...
+        Các trạng thái bị ÉP (coffee/cake) hết giờ cũng về patrol."""
+        effects: List[dict] = []
+        if self.ob_state == "patrol":
+            self.ob_state = "watch"
+            self.ob_kind = ""
+            self.ob_deadline = now_wall + self.rng.uniform(4, 6)
+        elif self.ob_state == "watch":
+            if self.rng.random() < 0.45:
+                kind = OFFICE_DISTRACT_KINDS[
+                    self._office_kind_idx % len(OFFICE_DISTRACT_KINDS)]
+                self._office_kind_idx += 1
+                self.ob_state = "distracted"
+                self.ob_kind = kind
+                self.ob_deadline = now_wall + self.rng.uniform(6, 10)
+                effects.append({
+                    "type": "office_safe", "kind": kind,
+                    "speak": (f"Sếp đi {OFFICE_DISTRACT_PHRASES[kind]} rồi — "
+                              "LÉN THÔI CẢ NHÀ ƠI!"),
+                    "speak_priority": 3,
+                })
+            else:
+                self.ob_state = "patrol"
+                self.ob_kind = ""
+                self.ob_deadline = now_wall + self.rng.uniform(8, 14)
+        else:  # distracted | coffee | cake
+            self.ob_state = "patrol"
+            self.ob_kind = ""
+            self.ob_deadline = now_wall + self.rng.uniform(8, 14)
+        return effects
+
+    def _office_start_party(self, now_wall: float, seconds: float) -> None:
+        """Mở / gia hạn TIỆC VĂN PHÒNG: sếp bị ép sang trạng thái party
+        (an toàn tuyệt đối) tới mốc party_until xa nhất."""
+        self.office_party_until = max(self.office_party_until,
+                                      now_wall + seconds)
+        self.ob_state = "party"
+        self.ob_kind = ""
+        self.ob_deadline = self.office_party_until
+
+    def _office_check_party(self, now_wall: float) -> List[dict]:
+        """Quỹ ăn vụng đủ 500 và đang không tiệc -> mở TIỆC VĂN PHÒNG 20s."""
+        if (self.office_fund >= OFFICE_FUND_GOAL
+                and now_wall >= self.office_party_until):
+            self.office_fund -= OFFICE_FUND_GOAL
+            self._office_start_party(now_wall, 20)
+            return [{
+                "type": "office_party", "source": "fund",
+                "speak": ("🎉 TIỆC VĂN PHÒNG! Sếp cũng ăn bánh rồi — làm gì "
+                          "cũng không bị bắt đâu, quẩy lên!"),
+                "speak_priority": 1,
+            }]
+        return []
+
+    def _office_caught(self, p: Player, action: str,
+                       now_wall: float) -> List[dict]:
+        """Bắt quả tang: đứng góc phạt 20s, cả phòng bị trừ quỹ 30,
+        nghi ngờ xoá sạch, sếp đọc một câu mắng (xoay vòng ngẫu nhiên)."""
+        p.penalty_until = now_wall + OFFICE_PENALTY_SECONDS
+        p.caught_round += 1
+        self.office_fund = max(0, self.office_fund - 30)
+        p.suspicion = 0.0
+        line = self.rng.choice(OFFICE_SCOLDS)
+        return [{
+            "type": "office_caught", "user": p.unique_id, "name": p.nickname,
+            "action": action, "boss_line": line,
+            "speak": line, "speak_priority": 2,
+        }]
+
+    def _office_try_action(self, p: Player, action: str,
+                           now: float) -> List[dict]:
+        """Một hành động lén lút của nhân viên mèo (ĂN/CHAT/GAME/BUG/LÀM/NGỦ).
+
+        Chặn khi: đang tổng kết ca, đang đứng góc phạt, còn cooldown của
+        chính hành động đó (2s). Bắt quả tang: an toàn -> không bao giờ bị
+        bắt; không thì xác suất = risk x (0.55 nếu sếp đang quét mắt, 0.18
+        nếu đang đi tuần) x hệ số gần-xa theo cột bàn. Thoát bắt lúc sếp
+        quét mắt vẫn bị +30 nghi ngờ (thoát hoạ trong gang tấc) — nghi ngờ
+        chạm 100 thì bị bắt vì "bị để ý quá nhiều"."""
+        self._office_ensure()
+        if self.office_phase != "play":
+            return []
+        now_wall = time.time()
+        if now_wall < p.penalty_until:
+            return []
+        if now - p.last_office.get(action, -100.0) < OFFICE_ACTION_COOLDOWN:
+            return []
+        p.last_office[action] = now
+        desk = p.seat % OFFICE_DESKS
+        safe = self._office_is_safe(now_wall)
+
+        # --- phân loại hành động: cho Bug ăn tuỳ Bug có đang ở bàn mình ---
+        if action == "bug":
+            if self.office_bug_desk == desk:
+                key, pts, risk = "feedbug", 20, 0.40
+            else:
+                key, pts, risk = "callbug", 3, 0.40
+                self.office_bug_target_desk = desk  # gọi Bug lần mò tới bàn mình
+        else:
+            spec = OFFICE_ACTIONS[action]
+            key, pts, risk = action, spec["pts"], spec["risk"]
+        p.office_act = key
+        p.office_act_until = now_wall + 2.5
+
+        effects: List[dict] = []
+        if risk > 0 and not safe:
+            prox = (1.15 if abs(self.ob_x - self._office_desk_x(desk)) < 0.25
+                    else 0.8)
+            catch_p = risk * (0.55 if self.ob_state == "watch" else 0.18) * prox
+            if self.rng.random() < catch_p:
+                return self._office_caught(p, key, now_wall)
+            if self.ob_state == "watch":
+                p.suspicion += 30
+                if p.suspicion >= 100:
+                    return self._office_caught(p, key, now_wall)
+                effects.append({
+                    "type": "office_warn", "user": p.unique_id,
+                    "name": p.nickname, "suspicion": round(p.suspicion),
+                })
+
+        # --- thành công: điểm (nhân đôi lúc an toàn) vào cá nhân + quỹ ---
+        if safe:
+            pts *= 2
+        if key == "work":
+            p.suspicion = max(0.0, p.suspicion - 20)
+        p.office_pts += pts
+        p.office_pts_total += pts
+        self._office_reach[p.unique_id] = now_wall
+        self.office_fund += pts
+        eff: dict = {"type": "office_action", "user": p.unique_id,
+                     "name": p.nickname, "action": key, "pts": pts,
+                     "safe": safe, "desk": desk}
+        if (key == "feedbug"
+                and now - self._office_last_feedbug_speak >= 6.0):
+            self._office_last_feedbug_speak = now
+            eff["speak"] = f"Bug cảm ơn {p.nickname}!"
+            eff["speak_priority"] = 4
+        effects.append(eff)
+        effects += self._office_check_party(now_wall)
+        return effects
+
+    def _office_end_shift(self, now_wall: float) -> List[dict]:
+        """Chốt ca: xướng nhân viên lén lút điểm cao nhất + người bị bắt
+        nhiều nhất của ca, rồi vào 12s tổng kết (hành động bị khoá)."""
+        top: Optional[Player] = None
+        for p in self.players.values():
+            if p.office_pts <= 0:
+                continue
+            if (top is None or p.office_pts > top.office_pts
+                    or (p.office_pts == top.office_pts
+                        and self._office_reach.get(p.unique_id, 0.0)
+                        < self._office_reach.get(top.unique_id, 0.0))):
+                top = p
+        most: Optional[Player] = None
+        for p in self.players.values():
+            if p.caught_round <= 0:
+                continue
+            if most is None or p.caught_round > most.caught_round:
+                most = p
+        speak = f"Hết ca {self.office_shift}!"
+        if top is not None:
+            speak += (f" 🏆 Nhân viên lén lút của ca: {top.nickname} "
+                      f"với {top.office_pts} điểm!")
+        if most is not None:
+            speak += (f" 🐀 Bị bắt nhiều nhất: {most.nickname} — "
+                      f"{most.caught_round} lần ra góc!")
+        if top is None and most is None:
+            speak += " Cả phòng ngoan quá, chẳng ai lén lút gì cả!"
+        eff = {"type": "office_shift_end", "shift": self.office_shift,
+               "top_user": top.unique_id if top else None,
+               "top_name": top.nickname if top else "",
+               "top_pts": top.office_pts if top else 0,
+               "most_caught_user": most.unique_id if most else None,
+               "most_caught_name": most.nickname if most else "",
+               "most_caught": most.caught_round if most else 0,
+               "speak": speak, "speak_priority": 1}
+        self.office_phase = "summary"
+        self.office_deadline = now_wall + OFFICE_SUMMARY_SECONDS
+        return [eff]
+
+    def _office_tick(self, now_wall: float) -> List[dict]:
+        """Nhịp văn phòng trong tick(): tiệc ép trạng thái sếp, máy trạng
+        thái sếp, sếp đi tuần, nghi ngờ nguội dần, Bug đổi bàn, chuyển ca.
+        dt theo now_wall truyền vào (kẹp 0..5s) nên test bước được."""
+        effects: List[dict] = []
+        if not self._office_ready:
+            return effects
+        if self._office_last_tick_at is None:
+            dt = 0.0
+        else:
+            dt = max(0.0, min(5.0, now_wall - self._office_last_tick_at))
+        self._office_last_tick_at = now_wall
+
+        # --- tiệc văn phòng: sếp bị cuốn vào tiệc cho tới party_until ---
+        if now_wall < self.office_party_until:
+            if self.ob_state != "party":
+                self.ob_state = "party"
+                self.ob_kind = ""
+            self.ob_deadline = self.office_party_until
+        elif self.ob_state == "party":
+            self.ob_state = "patrol"
+            self.ob_kind = ""
+            self.ob_deadline = now_wall + self.rng.uniform(8, 14)
+
+        # --- máy trạng thái sếp (tiệc xử lý riêng ở trên) ---
+        if self.ob_state != "party" and now_wall >= self.ob_deadline:
+            effects += self._office_boss_advance(now_wall)
+
+        # --- sếp đi tuần: chạy qua lại giữa 0.12 và 0.88, chạm biên thì quay đầu ---
+        if self.ob_state == "patrol" and dt > 0:
+            self.ob_x += self.ob_dir * OFFICE_BOSS_SPEED * dt
+            if self.ob_x >= 0.88:
+                self.ob_x = 0.88
+                self.ob_dir = -1
+            elif self.ob_x <= 0.12:
+                self.ob_x = 0.12
+                self.ob_dir = 1
+
+        # --- nghi ngờ nguội dần theo thời gian ---
+        if dt > 0:
+            for pl in self.players.values():
+                if pl.suspicion > 0:
+                    pl.suspicion = max(0.0, pl.suspicion - 3.0 * dt)
+
+        # --- Bug lang thang: mỗi 12–20s đổi sang bàn khác; có người gọi thì
+        # 50% Bug mò đúng tới bàn người gọi ---
+        if now_wall >= self.office_bug_move_at:
+            target = self.office_bug_target_desk
+            self.office_bug_target_desk = None
+            if (target is not None and target != self.office_bug_desk
+                    and self.rng.random() < 0.5):
+                self.office_bug_desk = target
+            else:
+                choices = [d for d in range(OFFICE_DESKS)
+                           if d != self.office_bug_desk]
+                self.office_bug_desk = self.rng.choice(choices)
+            self.office_bug_move_at = now_wall + self.rng.uniform(12, 20)
+
+        # --- chuyển pha ca: hết giờ -> tổng kết 12s -> ca mới, reset điểm ca ---
+        if now_wall >= self.office_deadline:
+            if self.office_phase == "play":
+                effects += self._office_end_shift(now_wall)
+            else:
+                self.office_shift += 1
+                self.office_phase = "play"
+                self.office_deadline = now_wall + OFFICE_SHIFT_SECONDS
+                for pl in self.players.values():
+                    pl.office_pts = 0
+                    pl.caught_round = 0
+                    pl.suspicion = 0.0
+                    pl.penalty_until = 0.0
+                self._office_reach = {}
+        return effects
+
     # ------------------------------------------------------- Vườn Mèo: tính cách
     def _assign_cat(self, p: Player) -> None:
         """Gán tính cách ổn định theo tên + tung xúc xắc Mèo Vàng đúng 1 lần/phiên."""
@@ -1230,13 +1608,15 @@ class GameState:
     def set_stage_mode(self, mode: str, boss_max_hp: Optional[int] = None,
                        boss_taunts: Optional[bool] = None,
                        boss_skin: Optional[str] = None) -> None:
-        """Đổi chế độ sân khấu (run | boss | garden | miner | tug) + áp máu boss / thoại từ config."""
-        if mode not in ("run", "boss", "garden", "miner", "tug"):
+        """Đổi chế độ sân khấu (run | boss | garden | miner | tug | office) + áp máu boss / thoại từ config."""
+        if mode not in ("run", "boss", "garden", "miner", "tug", "office"):
             return
         if mode == "miner":
             self._miner_ensure()
         if mode == "tug":
             self._tug_ensure()
+        if mode == "office":
+            self._office_ensure()
         if boss_taunts is not None:
             self.boss_taunts = bool(boss_taunts)
         if boss_skin is not None:
@@ -1517,6 +1897,40 @@ class GameState:
                                 "force": round(p.tug_force, 1),
                                 "pulls": p.tug_pulls,
                                 "team": p.tug_team} for p in top_force]
+        if self.stage_mode == "office":
+            self._office_ensure()
+            now_o = time.time()
+            if self.ob_state == "distracted":
+                kind_o = self.ob_kind
+            elif self.ob_state in ("party", "coffee", "cake"):
+                kind_o = self.ob_state
+            else:
+                kind_o = ""
+            snap["office"] = {
+                "shift": self.office_shift,
+                "phase": self.office_phase,
+                "time_left": max(0, round(self.office_deadline - now_o)),
+                "fund": self.office_fund,
+                "fund_goal": OFFICE_FUND_GOAL,
+                "coffee": {"likes": self.office_coffee_likes,
+                           "goal": OFFICE_COFFEE_GOAL},
+                "party_active": now_o < self.office_party_until,
+                "bug_desk": self.office_bug_desk,
+            }
+            snap["office_boss"] = {
+                "state": self.ob_state,
+                "kind": kind_o,
+                "x": round(self.ob_x, 3),
+                "facing": "right" if self.ob_dir > 0 else "left",
+                "state_left": max(0, round(self.ob_deadline - now_o)),
+                "safe": self._office_is_safe(now_o),
+            }
+            top_office = sorted(self.players.values(),
+                                key=lambda p: (-p.office_pts_total,
+                                               p.joined_at))[:5]
+            snap["office_top"] = [{"name": p.nickname,
+                                   "pts": p.office_pts_total}
+                                  for p in top_office]
         return snap
 
     # ------------------------------------------------------------- sự kiện
@@ -1551,6 +1965,15 @@ class GameState:
 
         text = normalize(comment)
         tokens = set(text.split())
+
+        # --- Văn Phòng Lén Lút: hành động lén của nhân viên mèo ---
+        # Phải chặn ĐẦU TIÊN: "an" trùng lệnh cho Bug ăn, "ngu"/"buon ngu"
+        # trùng lệnh NGỦ của Bug — ở văn phòng chúng là việc riêng của nhân viên.
+        if self.stage_mode == "office":
+            office_action = OFFICE_TEXT_TO_ACTION.get(text)
+            if office_action is not None:
+                effects += self._office_try_action(p, office_action, now)
+                return effects
 
         # --- Đào Vàng PK: vào đội (MÈO / CHUỘT) + thả móc (ĐÀO) ---
         # Phải chặn TRƯỚC handler MEOW ở dưới vì "meo" là lệnh vào Đội Mèo ở mỏ.
@@ -1838,6 +2261,29 @@ class GameState:
                     "speak_priority": 1,
                 })
             return effects
+        if self.stage_mode == "office":
+            # Văn Phòng Lén Lút: tim = cả phòng RÓT CÀ PHÊ cho sếp (bộ đếm
+            # riêng, tách khỏi chu trình tim chung); đủ 200 tim sếp buộc phải
+            # đi nghỉ pha cà phê 15s — cửa sổ an toàn cho cả phòng lén lút.
+            self._office_ensure()
+            self.office_coffee_likes += count
+            effects: List[dict] = [{"type": "likes",
+                                    "likes_since_rain": self.likes_since_rain,
+                                    "like_goal": self.like_goal,
+                                    "total_likes": self.total_likes}]
+            if self.office_coffee_likes >= OFFICE_COFFEE_GOAL:
+                self.office_coffee_likes = 0
+                now_wall = time.time()
+                if now_wall >= self.office_party_until:
+                    self.ob_state = "coffee"
+                    self.ob_kind = ""
+                    self.ob_deadline = now_wall + 15
+                effects.append({
+                    "type": "office_coffee",
+                    "speak": "☕ Cả phòng rót cà phê — sếp đi nghỉ pha cà phê 15 giây, tranh thủ lén thôi!",
+                    "speak_priority": 1,
+                })
+            return effects
         if self.stage_mode == "boss":
             # Chế độ Đánh Boss: tim nạp thanh Nộ thay cho đếm mưa cá.
             # Đầy Nộ -> mưa cá trút xuống boss, sát thương cả đội (không tính riêng ai).
@@ -2021,6 +2467,31 @@ class GameState:
                 effects.append({"type": "tug_buff", "team": team,
                                 "mult": buff["mult"], "until": buff["until"],
                                 "user": p.unique_id, "name": p.nickname})
+        # Văn Phòng Lén Lút: quà (khi tự đến) -> BÁNH làm sếp xao lãng 10s;
+        # quà thật to (>=100 kim cương) -> TIỆC MINI 12s, cả phòng an toàn.
+        # Chỉ là phản ứng cảm ơn, KHÔNG kêu gọi tặng quà.
+        if self.stage_mode == "office":
+            self._office_ensure()
+            d = int(diamond_count or 1)
+            now_wall = time.time()
+            if d >= 100:
+                self._office_start_party(now_wall, 12)
+                effects.append({"type": "office_party", "source": "gift",
+                                "user": p.unique_id, "name": p.nickname})
+            else:
+                if self._office_is_safe(now_wall):
+                    # đang an toàn sẵn: kéo dài cửa sổ an toàn thêm cho đủ 10s
+                    self.ob_deadline = max(self.ob_deadline, now_wall + 10)
+                    if self.ob_state == "party":
+                        self.office_party_until = max(
+                            self.office_party_until, now_wall + 10)
+                        self.ob_deadline = self.office_party_until
+                else:
+                    self.ob_state = "cake"
+                    self.ob_kind = ""
+                    self.ob_deadline = now_wall + 10
+                effects.append({"type": "office_cake",
+                                "user": p.unique_id, "name": p.nickname})
         return effects
 
     def handle_follow(self, unique_id: str, nickname: str,
@@ -2058,6 +2529,11 @@ class GameState:
                 100.0, self.tug_morale[p.tug_team] + 10)
             effects.append({"type": "tug_follow", "user": p.unique_id,
                             "name": p.nickname, "team": p.tug_team})
+        if self.stage_mode == "office":
+            # Văn Phòng Lén Lút: follow = nhân viên mới nhận bàn làm việc.
+            self._office_ensure()
+            effects.append({"type": "office_join", "user": p.unique_id,
+                            "name": p.nickname, "desk": p.seat % OFFICE_DESKS})
         return effects
 
     def handle_share(self, unique_id: str, nickname: str,
@@ -2140,6 +2616,10 @@ class GameState:
         # --- Kéo Co: nhịp hiệp + vật lý dây ---
         if self.stage_mode == "tug":
             effects += self._tug_tick(now_wall)
+
+        # --- Văn Phòng Lén Lút: sếp tuần tra + ca làm việc ---
+        if self.stage_mode == "office":
+            effects += self._office_tick(now_wall)
 
         # --- Đánh Boss: xướng boss xuất hiện 1 lần + hồi sinh sau 15s ---
         if self.stage_mode == "boss":

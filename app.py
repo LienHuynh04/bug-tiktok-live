@@ -58,7 +58,8 @@ DEFAULT_CONFIG = {
     # Chế độ sân khấu: "run" = Chạy cùng Bug (mặc định), "boss" = Đánh Boss Chuột Trùm Răng Sắt,
     # "garden" = Vườn Mèo của Bug (mỗi người xem một bé mèo, mỗi bé một tính cách),
     # "miner" = Đào Vàng PK (2 đội Mèo / Chuột móc vàng thi đấu theo hiệp),
-    # "tug" = Kéo Co (2 đội Mèo Cam / Mèo Xám kéo dây thi đấu theo hiệp)
+    # "tug" = Kéo Co (2 đội Mèo Cam / Mèo Xám kéo dây thi đấu theo hiệp),
+    # "office" = Sếp Đi Rồi! (văn phòng lén lút: cả phòng hợp tác qua mặt sếp tuần tra)
     "stage_mode": "run",
     "boss_max_hp": 1000,
     "boss_taunts": True,    # boss chửi lại: thoại châm chọc theo mốc máu / khi bị dội đòn
@@ -593,6 +594,16 @@ DEMO_TUG_COMMENTS = [
     "kéo", "kéo", "cam", "kéo", "xám", "hò", "kéo", "kéo",
     "cam", "hò dô", "kéo", "xám", "kéo", "meow", "kéo", "kéo",
 ]
+# Bình luận demo riêng cho Văn Phòng Lén Lút: tỉ trọng hành động theo thiết kế —
+# giả vờ làm việc 30%, ăn vụng 30%, nói chuyện 15%, chơi game lén 15%,
+# cho Bug ăn 5%, ngủ gật 5% (20 mục, chọn ngẫu nhiên đều = đúng tỉ trọng)
+DEMO_OFFICE_COMMENTS = [
+    "làm", "làm việc", "làm", "gõ phím", "làm", "làm việc",
+    "ăn", "ăn vụng", "ăn cơm", "ăn", "ăn bánh", "ăn",
+    "chat", "nói chuyện", "tám",
+    "game", "chơi game", "game",
+    "bug", "ngủ",
+]
 
 
 class DemoSimulator:
@@ -701,6 +712,23 @@ class DemoSimulator:
                             await asyncio.sleep(self.rng.uniform(0.2, 0.5))
                             uid2, nick2 = self.rng.choice(DEMO_USERS)
                             await self._push(self.game.handle_comment(uid2, nick2, "kéo"))
+                elif self.game.stage_mode == "office":
+                    # Demo Văn Phòng Lén Lút: nhân viên giả làm việc riêng theo
+                    # tỉ trọng đã trộn sẵn trong DEMO_OFFICE_COMMENTS, tim chảy
+                    # đều rót cà phê cho sếp (đủ 200 là sếp đi nghỉ 15s),
+                    # follow/quà thỉnh thoảng (quà to = tiệc mini)
+                    if roll < 0.10:
+                        await self._push(self.game.handle_join(uid, nick))
+                    elif roll < 0.35:
+                        await self._push(self.game.handle_like(self.rng.randint(10, 40)))
+                    elif roll < 0.41:
+                        await self._push(self.game.handle_follow(uid, nick))
+                    elif roll < 0.45:
+                        name, diamonds = self.rng.choice(DEMO_BOSS_GIFTS)
+                        await self._push(self.game.handle_gift(uid, nick, name, diamonds))
+                    else:
+                        cmt = self.rng.choice(DEMO_OFFICE_COMMENTS)
+                        await self._push(self.game.handle_comment(uid, nick, cmt))
                 elif roll < 0.12:
                     await self._push(self.game.handle_join(uid, nick))
                 elif roll < 0.22:
@@ -853,7 +881,7 @@ def build_app() -> web.Application:
             cfg_now["tts_engine"] = "edge"
         if body.get("meow_enabled") is not None:
             cfg_now["meow_enabled"] = bool(body["meow_enabled"])
-        if body.get("stage_mode") in ("run", "boss", "garden", "miner", "tug"):
+        if body.get("stage_mode") in ("run", "boss", "garden", "miner", "tug", "office"):
             cfg_now["stage_mode"] = body["stage_mode"]
         if body.get("music_enabled") is not None:
             cfg_now["music_enabled"] = bool(body["music_enabled"])

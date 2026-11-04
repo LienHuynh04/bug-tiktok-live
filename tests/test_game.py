@@ -1031,6 +1031,231 @@ def run():
     assert pub["tug_team"] == "cam" and pub["tug_pulls"] == 1
     assert pub["stamina"] == 88 and pub["tired"] is False
 
+    # ============================================================ VĂN PHÒNG LÉN LÚT
+    from game import OPENING_OFFICE, IDLE_OFFICE, OFFICE_SCOLDS  # noqa: E402
+
+    class _StubRng:
+        """rng giả cho test văn phòng: random() luôn trả 1 giá trị cố định
+        (0.0 = luôn trúng xác suất, 0.99 = luôn trượt) để ép bắt / thoát bắt."""
+
+        def __init__(self, val=0.0):
+            self.val = val
+
+        def random(self):
+            return self.val
+
+        def uniform(self, a, b):
+            return (a + b) / 2.0
+
+        def choice(self, seq):
+            return seq[0]
+
+        def randrange(self, n):
+            return 0
+
+        def randint(self, a, b):
+            return a
+
+    go = GameState(like_goal=10, rng=random.Random(401))
+    go.set_stage_mode("office")
+    assert go.snapshot()["stage_mode"] == "office"
+    assert go.opening_line() == OPENING_OFFICE
+    assert go.idle_line() == IDLE_OFFICE
+    assert "office" not in GameState(rng=random.Random(1)).snapshot()
+
+    # --- máy trạng thái sếp: patrol -> watch -> xao lãng (office_safe đúng 1 lần,
+    # loại xao lãng xoay vòng coffee -> phone) -> patrol ---
+    gcyc = GameState(rng=_StubRng(0.0))   # random() = 0 < 0.45: sau watch luôn xao lãng
+    gcyc.set_stage_mode("office")
+    assert gcyc.ob_state == "patrol"
+    gcyc.ob_deadline = time.time() - 1
+    gcyc.tick()
+    assert gcyc.ob_state == "watch"
+    gcyc.ob_deadline = time.time() - 1
+    eff = gcyc.tick()
+    assert gcyc.ob_state == "distracted" and gcyc.ob_kind == "coffee"
+    safes = [e for e in eff if e["type"] == "office_safe"]
+    assert len(safes) == 1 and safes[0]["kind"] == "coffee"
+    assert "LÉN THÔI CẢ NHÀ ƠI" in safes[0]["speak"]
+    eff = gcyc.tick()
+    assert not any(e["type"] == "office_safe" for e in eff)   # không phát lặp
+    gcyc.ob_deadline = time.time() - 1
+    gcyc.tick()
+    assert gcyc.ob_state == "patrol"
+    gcyc.ob_deadline = time.time() - 1
+    gcyc.tick()
+    gcyc.ob_deadline = time.time() - 1
+    gcyc.tick()
+    assert gcyc.ob_state == "distracted" and gcyc.ob_kind == "phone"  # xoay vòng
+
+    # --- sếp đi tuần: x chạy theo hướng, chạm biên thì quay đầu ---
+    gmv = GameState(rng=random.Random(406))
+    gmv.set_stage_mode("office")
+    base_mv = time.time()
+    gmv.tick(now_wall=base_mv)            # tick đầu dt = 0
+    gmv.tick(now_wall=base_mv + 2)        # 2s đi tuần, hướng mặc định +1
+    assert gmv.ob_x > 0.5
+
+    # --- bị bắt lúc sếp quét mắt (rng ép trúng): phạt 20s, quỹ -30, khoá hành động ---
+    gct = GameState(rng=_StubRng(0.0))
+    gct.set_stage_mode("office")
+    gct.handle_join("c1", "Nạn Nhân")     # ghế 0 -> bàn 0
+    gct.ob_state = "watch"
+    gct.ob_deadline = time.time() + 60
+    gct.office_fund = 100
+    eff = gct.handle_comment("c1", "Nạn Nhân", "ăn", now=100.0)
+    caught = [e for e in eff if e["type"] == "office_caught"]
+    assert caught and caught[0]["action"] == "eat"
+    assert caught[0]["boss_line"] in OFFICE_SCOLDS
+    assert caught[0]["speak"] == caught[0]["boss_line"]
+    pc1 = gct.players["c1"]
+    assert pc1.caught_round == 1 and pc1.penalty_until > time.time()
+    assert pc1.office_pts == 0 and gct.office_fund == 70
+    eff = gct.handle_comment("c1", "Nạn Nhân", "làm", now=101.0)
+    assert not any(e["type"] == "office_action" for e in eff)   # đang phạt: khoá
+
+    # --- lúc sếp xao lãng: không bao giờ bị bắt (dù rng ép trúng) + điểm x2 ---
+    gsf = GameState(rng=_StubRng(0.0))
+    gsf.set_stage_mode("office")
+    gsf.handle_join("s1", "Lén Giỏi")
+    gsf.ob_state = "distracted"
+    gsf.ob_kind = "phone"
+    gsf.ob_deadline = time.time() + 60
+    eff = gsf.handle_comment("s1", "Lén Giỏi", "ăn", now=100.0)
+    acts = [e for e in eff if e["type"] == "office_action"]
+    assert acts and acts[0]["pts"] == 20 and acts[0]["safe"] is True
+    assert gsf.players["s1"].office_pts == 20 and gsf.office_fund == 20
+    # LÀM: an toàn tuyệt đối + hạ nghi ngờ 20
+    gsf.ob_state = "watch"
+    gsf.ob_deadline = time.time() + 60
+    gsf.players["s1"].suspicion = 50.0
+    eff = gsf.handle_comment("s1", "Lén Giỏi", "làm", now=103.0)
+    acts = [e for e in eff if e["type"] == "office_action"]
+    assert acts and acts[0]["action"] == "work" and acts[0]["pts"] == 2
+    assert gsf.players["s1"].suspicion == 30.0
+
+    # --- thoát bắt lúc quét mắt: +30 nghi ngờ mỗi lần; nghi ngờ nguội theo tick;
+    # chạm 100 -> bị bắt vì bị để ý quá nhiều ---
+    gnm = GameState(rng=_StubRng(0.99))   # roll cao: không bao giờ trúng xác suất bắt
+    gnm.set_stage_mode("office")
+    gnm.handle_join("n1", "Suýt Chết")
+    gnm.ob_state = "watch"
+    gnm.ob_deadline = time.time() + 600
+    for i in range(3):
+        eff = gnm.handle_comment("n1", "Suýt Chết", "game", now=100.0 + i * 3)
+        assert any(e["type"] == "office_warn" for e in eff)
+        assert not any(e["type"] == "office_caught" for e in eff)
+    assert gnm.players["n1"].suspicion == 90.0
+    base_nm = time.time()
+    gnm.tick(now_wall=base_nm)
+    gnm.tick(now_wall=base_nm + 5)        # 5s -> nghi ngờ nguội 15
+    assert gnm.players["n1"].suspicion == 75.0
+    eff = gnm.handle_comment("n1", "Suýt Chết", "game", now=100.0 + 9)
+    assert any(e["type"] == "office_caught" for e in eff)       # 75 + 30 >= 100
+    assert gnm.players["n1"].suspicion == 0.0                   # bị bắt thì xoá nghi ngờ
+
+    # --- cho Bug ăn: Bug ở bàn mình = 20 điểm (feedbug), ở bàn khác = 3 (callbug) ---
+    gfb = GameState(rng=random.Random(402))
+    gfb.set_stage_mode("office")
+    gfb.handle_join("f1", "Bạn Bug")      # ghế 0 -> bàn 0
+    gfb.ob_state = "distracted"
+    gfb.ob_kind = "window"
+    gfb.ob_deadline = time.time() + 60
+    gfb.office_bug_desk = 0
+    eff = gfb.handle_comment("f1", "Bạn Bug", "bug", now=100.0)
+    acts = [e for e in eff if e["type"] == "office_action"]
+    assert acts and acts[0]["action"] == "feedbug" and acts[0]["pts"] == 40   # 20 x2 an toàn
+    assert "Bug cảm ơn" in acts[0].get("speak", "")
+    gfb.office_bug_desk = 5
+    eff = gfb.handle_comment("f1", "Bạn Bug", "bug", now=103.0)
+    acts = [e for e in eff if e["type"] == "office_action"]
+    assert acts and acts[0]["action"] == "callbug" and acts[0]["pts"] == 6    # 3 x2
+    assert gfb.office_bug_target_desk == 0    # đã gọi Bug lần mò tới bàn mình
+
+    # --- quỹ đủ 500 -> TIỆC VĂN PHÒNG: quỹ trừ 500, sếp bị ép vào tiệc ---
+    gpt = GameState(rng=_StubRng(0.99))
+    gpt.set_stage_mode("office")
+    gpt.handle_join("p1", "Tiệc Thủ")
+    gpt.ob_state = "distracted"
+    gpt.ob_kind = "coffee"
+    gpt.ob_deadline = time.time() + 60
+    gpt.office_fund = 490
+    eff = gpt.handle_comment("p1", "Tiệc Thủ", "ăn", now=100.0)   # +20 -> 510
+    parties = [e for e in eff if e["type"] == "office_party"]
+    assert parties and parties[0]["source"] == "fund"
+    assert gpt.office_fund == 10
+    assert gpt.office_party_until > time.time() + 15
+    assert gpt.ob_state == "party"
+
+    # --- tim rót cà phê: đủ 200 -> sếp bị ép đi nghỉ pha cà phê 15s ---
+    gcf = GameState(rng=random.Random(403))
+    gcf.set_stage_mode("office")
+    eff = gcf.handle_like(199)
+    assert not any(e["type"] == "office_coffee" for e in eff)
+    assert gcf.office_coffee_likes == 199
+    eff = gcf.handle_like(1)
+    assert any(e["type"] == "office_coffee" for e in eff)
+    assert gcf.office_coffee_likes == 0
+    assert gcf.ob_state == "coffee" and gcf.ob_deadline > time.time() + 10
+
+    # --- quà: bánh làm sếp xao lãng (đang an toàn thì kéo dài, không đổi trạng thái);
+    # quà to -> tiệc mini ---
+    ggft = GameState(rng=random.Random(404))
+    ggft.set_stage_mode("office")
+    ggft.handle_join("g1", "Bánh Thủ")
+    assert ggft.ob_state == "patrol"
+    eff = ggft.handle_gift("g1", "Bánh Thủ", "Bánh quy", 5)
+    assert any(e["type"] == "office_cake" for e in eff)
+    assert ggft.ob_state == "cake"
+    eff = ggft.handle_gift("g1", "Bánh Thủ", "Bánh quy", 5)
+    assert any(e["type"] == "office_cake" for e in eff)
+    assert ggft.ob_state == "cake"        # kéo dài cửa sổ an toàn, giữ nguyên trạng thái
+    eff = ggft.handle_gift("g1", "Bánh Thủ", "Sư tử", 150)
+    parties = [e for e in eff if e["type"] == "office_party"]
+    assert parties and parties[0]["source"] == "gift"
+    assert ggft.ob_state == "party" and ggft.office_party_until > time.time()
+
+    # --- hết ca: xướng người điểm cao nhất + bị bắt nhiều nhất; tổng kết khoá
+    # hành động; ca mới reset điểm ca ---
+    gsh = GameState(rng=random.Random(405))
+    gsh.set_stage_mode("office")
+    gsh.handle_join("t1", "Đỉnh Lén")
+    gsh.handle_join("t2", "Xui Xẻo")
+    gsh.players["t1"].office_pts = 50
+    gsh.players["t2"].office_pts = 30
+    gsh.players["t2"].caught_round = 2
+    gsh.office_deadline = time.time() - 1
+    eff = gsh.tick()
+    ends = [e for e in eff if e["type"] == "office_shift_end"]
+    assert ends and ends[0]["shift"] == 1
+    assert ends[0]["top_user"] == "t1" and ends[0]["top_pts"] == 50
+    assert ends[0]["most_caught_user"] == "t2" and ends[0]["most_caught"] == 2
+    assert "Nhân viên lén lút của ca" in ends[0]["speak"]
+    assert "Bị bắt nhiều nhất" in ends[0]["speak"]
+    assert gsh.office_phase == "summary"
+    eff = gsh.handle_comment("t1", "Đỉnh Lén", "ăn", now=100.0)
+    assert not any(e["type"] == "office_action" for e in eff)   # đang tổng kết: khoá
+    gsh.office_deadline = time.time() - 1
+    gsh.tick()
+    assert gsh.office_phase == "play" and gsh.office_shift == 2
+    assert gsh.players["t1"].office_pts == 0
+    assert gsh.players["t2"].caught_round == 0
+
+    # --- snapshot văn phòng: đủ khoá cho sân khấu dựng hình ---
+    gsh.players["t1"].office_pts_total = 77
+    snap = gsh.snapshot()
+    assert {"shift", "phase", "time_left", "fund", "fund_goal", "coffee",
+            "party_active", "bug_desk"} <= set(snap["office"].keys())
+    assert {"state", "kind", "x", "facing", "state_left",
+            "safe"} <= set(snap["office_boss"].keys())
+    assert snap["office"]["fund_goal"] == 500
+    assert snap["office"]["coffee"]["goal"] == 200
+    assert snap["office_top"][0] == {"name": "Đỉnh Lén", "pts": 77}
+    pub = gsh.players["t1"].public()
+    assert {"desk", "office_pts", "office_pts_total", "suspicion",
+            "penalty_left", "action", "action_left"} <= set(pub.keys())
+    assert pub["desk"] == 0 and pub["office_pts_total"] == 77
+
     print("✅ Tất cả test game đều PASS")
 
 

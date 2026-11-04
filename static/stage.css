@@ -147,6 +147,107 @@ body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; overflow: 
 #tugBannerTitle { font-size: 3.2vh; font-weight: 900; color: #ff9f43; letter-spacing: .02em; }
 #tugBannerSub { font-size: 1.8vh; font-weight: 700; margin-top: .6vh; line-height: 1.55; }
 
+/* ---------- chế độ Văn Phòng Lén Lút: hoán đổi panel ---------- */
+#titleOffice { display: none; }
+#stage.office-mode #titleOffice { display: block; }
+#stage.office-mode #titleRun, #stage.office-mode #titleBoss,
+#stage.office-mode #titleGarden, #stage.office-mode #titleMiner,
+#stage.office-mode #titleTug { display: none; }
+#officeBoard, #officeTop { display: none; }
+#stage.office-mode #officeBoard, #stage.office-mode #officeTop { display: block; }
+#stage.office-mode #menuBoard, #stage.office-mode #rankPanel,
+#stage.office-mode #bossBoard, #stage.office-mode #bossRankPanel,
+#stage.office-mode #gardenBoard, #stage.office-mode #gardenTop,
+#stage.office-mode #minerBoard, #stage.office-mode #minerTop,
+#stage.office-mode #tugBoard, #stage.office-mode #tugTop,
+#stage.office-mode #bossHud { display: none; }
+#stage.office-mode .run-only { display: none; }
+#officeStateBanner { display: none; }
+#stage.office-mode #officeStateBanner { display: block; }
+
+/* ---------- pill trạng thái sếp (dưới thanh tiêu đề) ---------- */
+#officeStateBanner {
+  position: absolute; top: 5.7vh; left: 50%; transform: translateX(-50%);
+  z-index: 22; pointer-events: none; white-space: nowrap;
+  font-size: 2.05vh; font-weight: 900; letter-spacing: .03em;
+  padding: .65vh 22px; border-radius: 99px;
+  box-shadow: 0 6px 22px rgba(10, 20, 40, .45);
+}
+#officeStateBanner.st-watch { background: #d7263d; color: #fff; animation: officeWatchPulse .8s ease-in-out infinite; }
+#officeStateBanner.st-patrol { background: #f4a259; color: #40260a; }
+#officeStateBanner.st-safe { background: #2ea44f; color: #fff; }
+#officeStateBanner.st-party {
+  background: linear-gradient(90deg, #ffb703, #fb8500, #ff5d8f, #ffb703);
+  background-size: 300% 100%; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.35);
+  animation: officePartySlide 2.2s linear infinite;
+}
+#officeStateBanner.flash { animation: officePop .45s ease-out; }
+#officeStateBanner.st-party.flash { animation: officePartySlide 2.2s linear infinite, officePop .45s ease-out; }
+@keyframes officeWatchPulse {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.07); }
+}
+@keyframes officePop {
+  0% { transform: translateX(-50%) scale(1); }
+  40% { transform: translateX(-50%) scale(1.16); }
+  100% { transform: translateX(-50%) scale(1); }
+}
+@keyframes officePartySlide {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+
+/* ---------- bảng lệnh văn phòng (tông xanh slate – teal công sở) ----------
+   Nằm DƯỚI dải bàn làm việc (0.35–0.66H) như bố cục kéo co, để không che mèo ở bàn */
+#officeBoard { top: 67.0vh; left: 2.5vw; width: 36%; padding: 0 0 .8vh; overflow: hidden; }
+#officeBoard h2 {
+  background: linear-gradient(90deg, #24506e, #2e8b8b);
+  font-size: 1.7vh; text-align: center; padding: .45vh 6px; letter-spacing: .03em;
+}
+#officeShiftLine { padding: .4vh 12px 0; font-size: 1.32vh; font-weight: 800; color: #a8e6e3; }
+#officeBoard ul { list-style: none; padding: .35vh 12px 0; font-size: 1.10vh; line-height: 1.34; }
+#officeBoard b { color: #ffd88a; }
+.office-bar-line { padding: .4vh 12px 0; font-size: 1.26vh; font-weight: 700; }
+#officeFundText { color: #ffb3c8; }
+#officeCoffeeText { color: #ffcf99; }
+.office-bar { margin: .3vh 12px 0; height: .9vh; background: rgba(255,255,255,.16); border-radius: 99px; overflow: hidden; }
+#officeFundFill { height: 100%; width: 0%; background: linear-gradient(90deg, #ff5d8f, #ffb703); transition: width .4s; }
+#officeCoffeeFill { height: 100%; width: 0%; background: linear-gradient(90deg, #d99a55, #8a5a2b); transition: width .4s; }
+
+/* ---------- TOP lén lút (dưới sân, bên phải) ---------- */
+#officeTop { top: 68.5vh; right: 2.5vw; width: 30%; }
+#officeTop h2 { font-size: 1.75vh; color: #7be3db; letter-spacing: .04em; }
+#officeTopList { list-style: none; margin-top: .6vh; font-size: 1.5vh; line-height: 1.75; }
+#officeTopList li { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+#officeTopList .rname { overflow: hidden; text-overflow: ellipsis; }
+#officeTopList .rkm { color: #ffd88a; font-weight: 700; }
+
+/* ---------- bong bóng thoại sếp khi bắt quả tang (kiểu #bossTaunt, tông sếp) ---------- */
+#officeBubble {
+  position: absolute; top: 34.6vh; left: 50%; transform: translateX(-50%);
+  max-width: 76%; z-index: 25; text-align: center; pointer-events: none;
+  background: #fff; color: #17304f; border: 3px solid #d7263d; border-radius: 16px;
+  font-size: 1.75vh; font-weight: 800; padding: .75vh 16px;
+  box-shadow: 0 8px 26px rgba(40,10,10,.45);
+}
+#officeBubble.hidden { display: none; }
+#officeBubble::after {
+  content: ""; position: absolute; left: 50%; top: -11px; transform: translateX(-50%);
+  border: 6px solid transparent; border-bottom: 8px solid #d7263d; border-top: 0;
+}
+
+/* ---------- banner tổng kết ca văn phòng ---------- */
+#officeBanner {
+  position: absolute; top: 30vh; left: 50%; transform: translateX(-50%);
+  width: 86%; z-index: 30; text-align: center; pointer-events: none;
+  background: rgba(10, 40, 48, .93); color: #fff;
+  border: 3px solid #38b2ac; border-radius: 20px; padding: 1.6vh 18px;
+  box-shadow: 0 10px 40px rgba(0, 30, 30, .6);
+}
+#officeBanner.hidden { display: none; }
+#officeBannerTitle { font-size: 3.2vh; font-weight: 900; color: #7be3db; letter-spacing: .02em; }
+#officeBannerSub { font-size: 1.8vh; font-weight: 700; margin-top: .6vh; line-height: 1.55; }
+
 /* sự kiện nổi bật trong nhật ký (giật vàng to, móc vàng...) */
 #eventLog li.hl { color: #ffd34d; font-weight: 800; }
 

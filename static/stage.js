@@ -436,13 +436,14 @@ let bossSyncTimer = null;
 const BOSS_BAR_HP = 250;           // mỗi thanh máu trên HUD = 250 HP (khớp game.py)
 
 function setStageMode(mode) {
-  if (mode !== "run" && mode !== "boss" && mode !== "garden" && mode !== "miner" && mode !== "tug") return;
+  if (mode !== "run" && mode !== "boss" && mode !== "garden" && mode !== "miner" && mode !== "tug" && mode !== "office") return;
   stageMode = mode;
   music.setTrack(mode); // Kéo Co dùng bản trống hội, các mode khác bản mặc định
   $("stage").classList.toggle("boss-mode", mode === "boss");
   $("stage").classList.toggle("garden-mode", mode === "garden");
   $("stage").classList.toggle("miner-mode", mode === "miner");
   $("stage").classList.toggle("tug-mode", mode === "tug");
+  $("stage").classList.toggle("office-mode", mode === "office");
   // nền boss tối sâu -> panel chuyển kính tối cho khỏi "nổi" lạc tông (chỉ boss)
   $("stage").classList.toggle("boss-dark", mode === "boss");
   // Banner hướng dẫn đổi ngay theo chế độ (không chờ vòng xoay 6s)
@@ -638,6 +639,18 @@ const tugFx = {
 };
 let tugDispPos = 0;                // vị trí cờ hiển thị (nội suy mượt về pos thật)
 
+/* ================= chế độ Văn Phòng Lén Lút ================= */
+let officeState = null;            // snapshot "office" mới nhất từ server
+let officeBoss = null;             // snapshot "office_boss" mới nhất từ server
+let officeShiftEnd = null;         // sự kiện office_shift_end gần nhất (cho banner tổng kết)
+let officeBannerKey = "";          // key trạng thái pill sếp hiện tại (tránh set lại DOM)
+let officeBubbleTimer = null;
+const officeFx = {
+  confetti: [],     // {x, y, vx, vy, rot, vr, col, sz, t} pháo giấy khi mở tiệc
+  shakeUntil: 0,    // rung màn hình khi có người bị bắt quả tang
+  lastPartySpawn: 0,
+};
+
 // Đầu móc theo đúng công thức server: tip = pivot + len * 0.825 * (sin, cos)(góc)
 function minerTipPx(team, W, H) {
   const piv = MINER_PIVOTS[team];
@@ -739,12 +752,80 @@ function updateTug(s) {
   }
 }
 
+// Pill trạng thái sếp: màu + chữ theo state/kind của office_boss
+function officeBannerInfo(b) {
+  if (!b) return { key: "patrol", cls: "st-patrol", text: "🚶 Sếp đang đi tuần…" };
+  switch (b.state) {
+    case "watch": return { key: "watch", cls: "st-watch", text: "👀 SẾP ĐANG NHÌN!" };
+    case "party": return { key: "party", cls: "st-party", text: "🎉 TIỆC VĂN PHÒNG!" };
+    case "coffee": return { key: "coffee", cls: "st-safe", text: "☕ SẾP ĐI NGHỈ PHA CÀ PHÊ…" };
+    case "cake": return { key: "cake", cls: "st-safe", text: "🎂 SẾP ĐANG ĂN BÁNH…" };
+    case "distracted":
+      if (b.kind === "phone") return { key: "d-phone", cls: "st-safe", text: "📱 SẾP ĐANG NGHE ĐIỆN THOẠI…" };
+      if (b.kind === "window") return { key: "d-window", cls: "st-safe", text: "🪟 SẾP ĐANG NGẮM CỬA SỔ…" };
+      return { key: "d-coffee", cls: "st-safe", text: "☕ SẾP ĐI PHA CÀ PHÊ…" };
+    default: return { key: "patrol", cls: "st-patrol", text: "🚶 Sếp đang đi tuần…" };
+  }
+}
+
+function updateOffice(s) {
+  officeState = s.office;
+  officeBoss = s.office_boss || null;
+  const o = officeState;
+  if (!o) return;
+  // pill trạng thái sếp (chỉ đụng DOM khi trạng thái thật sự đổi)
+  const info = officeBannerInfo(officeBoss);
+  if (info.key !== officeBannerKey) {
+    const el = $("officeStateBanner");
+    el.className = info.cls;
+    $("officeStateText").textContent = info.text;
+    if (info.cls === "st-safe" || info.cls === "st-party") {
+      // vừa lật sang cửa sổ an toàn -> nảy pill một nhịp cho dễ thấy
+      el.classList.remove("flash");
+      void el.offsetWidth;
+      el.classList.add("flash");
+    }
+    officeBannerKey = info.key;
+  }
+  $("officeShiftLine").textContent = o.phase === "summary"
+    ? `📋 CA ${o.shift} — ĐANG TỔNG KẾT…`
+    : `🏢 CA ${o.shift} • còn ${o.time_left}s`;
+  $("officeFundText").textContent = `🎉 Quỹ ăn vụng ${o.fund}/${o.fund_goal}`;
+  $("officeFundFill").style.width = Math.min(100, (o.fund / Math.max(1, o.fund_goal)) * 100) + "%";
+  const cf = o.coffee || { likes: 0, goal: 200 };
+  $("officeCoffeeText").textContent = `☕ Rót cà phê cho sếp ${cf.likes}/${cf.goal}`;
+  $("officeCoffeeFill").style.width = Math.min(100, (cf.likes / Math.max(1, cf.goal)) * 100) + "%";
+  const top = s.office_top || [];
+  $("officeTopList").innerHTML = top.length
+    ? top.map((t, i) => `<li><span class="rname">${i + 1}. 🕵️ ${escapeHtml(t.name)}</span><span class="rkm">${t.pts} điểm</span></li>`).join("")
+    : `<li><span class="rname">Chưa ai lén được gì — gõ "ăn" thử xem!</span></li>`;
+  // banner chỉ hiện trong pha tổng kết ca (12s)
+  if (o.phase === "summary") {
+    const e = officeShiftEnd;
+    if (e && e.shift === o.shift) {
+      $("officeBannerTitle").textContent = `📋 TỔNG KẾT CA ${e.shift}!`;
+      $("officeBannerSub").innerHTML =
+        (e.top_name ? `🏆 Vua lén lút: ${escapeHtml(e.top_name)} — ${e.top_pts} điểm<br>` : "") +
+        (e.most_caught_name
+          ? `🚨 Bị bắt nhiều nhất: ${escapeHtml(e.most_caught_name)} (${e.most_caught} lần)`
+          : "Không ai bị bắt cả ca — quá đỉnh!");
+    } else {
+      $("officeBannerTitle").textContent = `📋 TỔNG KẾT CA ${o.shift}!`;
+      $("officeBannerSub").textContent = "Đang cộng sổ điểm lén lút…";
+    }
+    $("officeBanner").classList.remove("hidden");
+  } else {
+    $("officeBanner").classList.add("hidden");
+  }
+}
+
 function renderSnapshot(s) {
   if (s.stage_mode) setStageMode(s.stage_mode);
   if (s.boss) updateBoss(s.boss);
   if (s.garden) updateGarden(s);
   if (s.miner) updateMiner(s);
   if (s.tug) updateTug(s);
+  if (s.office) updateOffice(s);
   if (s.players) {
     s.players.forEach(upsertPlayer);
     rankedPlayers = [...s.players].sort((a, b) => (b.distance_km || 0) - (a.distance_km || 0));
@@ -855,11 +936,20 @@ const TUG_GUIDE_TEXTS = [
   "❤️ Thả tim đủ là NỔI TRỐNG HỘI, cả hai đội sung sức!",
   "🏆 Kéo cờ qua vạch 85 là thắng hiệp — HÒ DÔ TA!",
 ];
+const OFFICE_GUIDE_TEXTS = [
+  "🏢 Gõ \"ăn\" ăn vụng — canh lúc sếp phân tâm, điểm nhân đôi!",
+  "👀 Sếp đang NHÌN thì đừng lén — bị bắt là ra góc phạt đó!",
+  "💻 Gõ \"làm\" giả vờ chăm chỉ để hạ nghi ngờ",
+  "🐱 Bug tới bàn ai thì gõ \"bug\" cho Bug ăn nha",
+  "❤️ Thả tim đủ 200 → sếp đi nghỉ pha cà phê 15 giây!",
+  "🎉 Quỹ ăn vụng đủ 500 → mở TIỆC VĂN PHÒNG!",
+];
 function guideTextsFor(mode) {
   return mode === "boss" ? BOSS_GUIDE_TEXTS
     : mode === "garden" ? GARDEN_GUIDE_TEXTS
     : mode === "miner" ? MINER_GUIDE_TEXTS
-    : mode === "tug" ? TUG_GUIDE_TEXTS : GUIDE_TEXTS;
+    : mode === "tug" ? TUG_GUIDE_TEXTS
+    : mode === "office" ? OFFICE_GUIDE_TEXTS : GUIDE_TEXTS;
 }
 let guideIdx = 0;
 setInterval(() => {
@@ -3201,6 +3291,815 @@ function drawTugScene(now, W, H, dt) {
   ctx2d.restore();
 }
 
+/* ================= cảnh Văn Phòng Lén Lút =================
+   Phòng làm việc vẽ bằng canvas: tường ấm + 2 cửa sổ chớp + đồng hồ treo +
+   poster "NỘI QUY: CẤM ĂN UỐNG 🚫", hành lang sếp đi tuần, 8 bàn làm việc
+   (2 cột × 4 hàng), góc phạt ở góc tường bên phải. Sếp = Chuột Răng Sắt
+   mặc vest — nhân vật gốc của kênh, vẽ hoàn toàn bằng code. */
+function officeLayout(W, H) {
+  return {
+    wallTop: H * 0.145, wallBot: H * 0.252,
+    corrBot: H * 0.338, bossBase: H * 0.330,
+    deskCols: [W * 0.29, W * 0.71],
+    deskRows: [H * 0.402, H * 0.484, H * 0.566, H * 0.648],
+    deskW: W * 0.37,
+    bossDeskX: W * 0.415, coolerX: W * 0.952,
+    winX: [W * 0.415, W * 0.865], clockX: W * 0.565, posterX: W * 0.70,
+  };
+}
+function officeDeskXY(desk, L) {
+  return { x: L.deskCols[desk % 2], y: L.deskRows[Math.min(3, (desk / 2) | 0)] };
+}
+
+function makeOfficeConfetti(n, W, H) {
+  const cols = ["#ff5d8f", "#ffd34d", "#38b2ac", "#7be495", "#ff9f1a", "#6cb4ff"];
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push({
+      x: Math.random() * W, y: -Math.random() * H * 0.22,
+      vx: (Math.random() - 0.5) * W * 0.02, vy: H * (0.11 + Math.random() * 0.13),
+      rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 6,
+      col: cols[i % cols.length], sz: W * (0.009 + Math.random() * 0.009), t: 0,
+    });
+  }
+  return out;
+}
+
+function officeNameTag(x, y, name, fs) {
+  const label = name.length > 14 ? name.slice(0, 13) + "…" : name;
+  ctx2d.font = `600 ${fs}px sans-serif`;
+  const w = ctx2d.measureText(label).width + 14;
+  ctx2d.fillStyle = "rgba(18, 24, 38, .78)";
+  ctx2d.beginPath(); ctx2d.roundRect(x - w / 2, y - fs * 0.72, w, fs * 1.44, 7); ctx2d.fill();
+  ctx2d.fillStyle = "#fff"; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  ctx2d.fillText(label, x, y + 1);
+}
+
+// Sếp Răng Sắt: chuột xám mặc vest navy + cà vạt đỏ, tay cầm ly cà phê.
+// s = chiều cao toàn thân; gốc tại (bx, baseY = chân), mặt hướng dir (1 = phải).
+// opts: {walk, back (quay lưng ngắm cửa sổ), cupUp (nhấp cà phê), phone, bent (cúi ăn bánh)}
+function drawOfficeBossRat(bx, baseY, s, dir, b, now, opts) {
+  opts = opts || {};
+  const coat = COATS.grey;
+  const bobY = opts.walk ? Math.abs(Math.sin(now / 130)) * s * 0.03 : 0;
+  ctx2d.save();
+  ctx2d.translate(bx, baseY - bobY);
+  ctx2d.scale(dir, 1);
+  if (opts.bent) ctx2d.rotate(0.10);
+  // đuôi chuột hồng dài quét đất phía sau
+  ctx2d.strokeStyle = "#cf9aa4"; ctx2d.lineWidth = s * 0.045; ctx2d.lineCap = "round";
+  ctx2d.beginPath();
+  ctx2d.moveTo(-s * 0.20, -s * 0.10);
+  ctx2d.quadraticCurveTo(-s * 0.55, -s * 0.02 + Math.sin(now / 300) * s * 0.02, -s * 0.74, -s * 0.11);
+  ctx2d.stroke();
+  // chân quần tây + giày (bước xen kẽ khi đi tuần)
+  const step = opts.walk ? Math.sin(now / 130) * s * 0.07 : 0;
+  ctx2d.fillStyle = "#232c3f";
+  ctx2d.fillRect(-s * 0.20 + step, -s * 0.17, s * 0.13, s * 0.17);
+  ctx2d.fillRect(s * 0.07 - step, -s * 0.17, s * 0.13, s * 0.17);
+  ctx2d.fillStyle = "#14100e";
+  ctx2d.beginPath(); ctx2d.ellipse(-s * 0.135 + step, -s * 0.006, s * 0.105, s * 0.028, 0, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.beginPath(); ctx2d.ellipse(s * 0.135 - step, -s * 0.006, s * 0.105, s * 0.028, 0, 0, Math.PI * 2); ctx2d.fill();
+  // thân vest navy
+  ctx2d.fillStyle = "#2e3d5c";
+  ctx2d.beginPath();
+  ctx2d.moveTo(-s * 0.30, -s * 0.66);
+  ctx2d.lineTo(s * 0.30, -s * 0.66);
+  ctx2d.lineTo(s * 0.25, -s * 0.13);
+  ctx2d.lineTo(-s * 0.25, -s * 0.13);
+  ctx2d.closePath(); ctx2d.fill();
+  if (!opts.back) {
+    // sơ mi trắng + cà vạt đỏ
+    ctx2d.fillStyle = "#f4f6f8";
+    ctx2d.beginPath();
+    ctx2d.moveTo(-s * 0.10, -s * 0.66); ctx2d.lineTo(s * 0.10, -s * 0.66);
+    ctx2d.lineTo(0, -s * 0.34); ctx2d.closePath(); ctx2d.fill();
+    ctx2d.fillStyle = "#c22730";
+    ctx2d.beginPath();
+    ctx2d.moveTo(-s * 0.045, -s * 0.655); ctx2d.lineTo(s * 0.045, -s * 0.655);
+    ctx2d.lineTo(s * 0.02, -s * 0.40); ctx2d.lineTo(0, -s * 0.335); ctx2d.lineTo(-s * 0.02, -s * 0.40);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  // tay trước: áp điện thoại lên tai, hoặc cầm ly cà phê (nâng lên miệng khi uống)
+  const cupX = s * 0.335, cupY = opts.cupUp ? -s * 0.78 : -s * 0.34;
+  ctx2d.strokeStyle = "#2e3d5c"; ctx2d.lineWidth = s * 0.085;
+  ctx2d.beginPath(); ctx2d.moveTo(s * 0.24, -s * 0.58);
+  ctx2d.lineTo(opts.phone ? s * 0.30 : cupX, opts.phone ? -s * 0.86 : cupY + s * 0.03); ctx2d.stroke();
+  if (opts.phone) {
+    ctx2d.save();
+    ctx2d.translate(s * 0.315, -s * 0.90); ctx2d.rotate(0.35);
+    ctx2d.fillStyle = "#1c2733";
+    ctx2d.beginPath(); ctx2d.roundRect(-s * 0.035, -s * 0.065, s * 0.07, s * 0.13, 3); ctx2d.fill();
+    ctx2d.fillStyle = "#9fd8ff";
+    ctx2d.fillRect(-s * 0.024, -s * 0.052, s * 0.048, s * 0.09);
+    ctx2d.restore();
+  } else if (!opts.bent) {
+    ctx2d.fillStyle = "#ffffff";
+    ctx2d.fillRect(cupX - s * 0.05, cupY - s * 0.055, s * 0.10, s * 0.095);
+    ctx2d.fillStyle = "#8a5a2b";
+    ctx2d.fillRect(cupX - s * 0.05, cupY - s * 0.055, s * 0.10, s * 0.028);
+    ctx2d.strokeStyle = "#d8dce1"; ctx2d.lineWidth = 2;
+    ctx2d.beginPath(); ctx2d.arc(cupX + s * 0.068, cupY - s * 0.008, s * 0.028, -1.2, 1.2); ctx2d.stroke();
+  }
+  // đầu chuột xám: tai tròn to viền hồng, mõm nhọn
+  const hx = s * 0.05, hy = -s * 0.82, hr = s * 0.215;
+  for (const e of [-1, 1]) {
+    ctx2d.fillStyle = coat.base;
+    ctx2d.beginPath(); ctx2d.arc(hx + e * hr * 0.72, hy - hr * 0.78, hr * 0.52, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.fillStyle = "#e8a2b4";
+    ctx2d.beginPath(); ctx2d.arc(hx + e * hr * 0.72, hy - hr * 0.78, hr * 0.30, 0, Math.PI * 2); ctx2d.fill();
+  }
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.arc(hx, hy, hr, 0, Math.PI * 2); ctx2d.fill();
+  if (!opts.back) {
+    ctx2d.fillStyle = "#d8dce1";
+    ctx2d.beginPath(); ctx2d.ellipse(hx + hr * 0.82, hy + hr * 0.28, hr * 0.62, hr * 0.40, 0, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.fillStyle = "#e77e95";
+    ctx2d.beginPath(); ctx2d.arc(hx + hr * 1.38, hy + hr * 0.22, hr * 0.13, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.strokeStyle = "rgba(70,70,80,.55)"; ctx2d.lineWidth = 1.1;
+    for (const wy of [-0.06, 0.10, 0.26]) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(hx + hr * 1.05, hy + hr * wy);
+      ctx2d.lineTo(hx + hr * 1.75, hy + hr * (wy - 0.10));
+      ctx2d.stroke();
+    }
+    const watching = b && b.state === "watch";
+    if (watching) {
+      // mắt mở to + lông mày xếch: đang soi
+      ctx2d.fillStyle = "#fff";
+      ctx2d.beginPath(); ctx2d.ellipse(hx + hr * 0.38, hy - hr * 0.18, hr * 0.20, hr * 0.24, 0, 0, Math.PI * 2); ctx2d.fill();
+      ctx2d.fillStyle = "#241f31";
+      ctx2d.beginPath(); ctx2d.arc(hx + hr * 0.46, hy - hr * 0.16, hr * 0.10, 0, Math.PI * 2); ctx2d.fill();
+      ctx2d.strokeStyle = "#5d646e"; ctx2d.lineWidth = 2.4;
+      ctx2d.beginPath(); ctx2d.moveTo(hx + hr * 0.12, hy - hr * 0.52); ctx2d.lineTo(hx + hr * 0.62, hy - hr * 0.38); ctx2d.stroke();
+      ctx2d.strokeStyle = "#7c828c"; ctx2d.lineWidth = 1.8;
+      ctx2d.beginPath(); ctx2d.moveTo(hx + hr * 0.72, hy + hr * 0.54); ctx2d.lineTo(hx + hr * 1.12, hy + hr * 0.54); ctx2d.stroke();
+    } else {
+      const blink = ((now + 700) % 3400) < 130;
+      ctx2d.fillStyle = "#241f31";
+      if (blink) ctx2d.fillRect(hx + hr * 0.24, hy - hr * 0.20, hr * 0.30, 2);
+      else { ctx2d.beginPath(); ctx2d.arc(hx + hr * 0.38, hy - hr * 0.18, hr * 0.11, 0, Math.PI * 2); ctx2d.fill(); }
+      ctx2d.strokeStyle = "#7c828c"; ctx2d.lineWidth = 1.6;
+      ctx2d.beginPath(); ctx2d.arc(hx + hr * 0.80, hy + hr * 0.36, hr * 0.20, 0.15 * Math.PI, 0.8 * Math.PI); ctx2d.stroke();
+    }
+  }
+  ctx2d.restore();
+}
+
+// Mèo nhân viên ngồi ở bàn (mặt hướng khán giả), gốc tại (x, baseY = mặt bàn).
+// Hiệu ứng hành động "tại chỗ": cúi đầu ăn/ngủ/game, vẫy tay gọi Bug, bong
+// bóng chat, 💤 khi ngủ gật, ⚠️ khi nghi ngờ cao. Đồ trên bàn vẽ ở drawOfficeDesk.
+function drawOfficeCat(rec, x, baseY, s, now, party) {
+  const p = rec.data;
+  const coat = COATS[p.coat] || COATS.tabby;
+  const action = (p.action_left || 0) > 0 ? p.action : "";
+  let hyOff = 0;
+  if (action === "eat") hyOff = Math.abs(Math.sin(now / 110)) * s * 0.13;
+  else if (action === "game") hyOff = s * 0.10;
+  else if (action === "nap") hyOff = s * 0.20;
+  const bounce = party ? Math.abs(Math.sin(now / 170 + rec.hue)) * s * 0.05 : 0;
+  ctx2d.save();
+  ctx2d.translate(x, baseY - bounce);
+  // bóng + đuôi vẫy sau thân
+  ctx2d.fillStyle = "rgba(90, 60, 20, .18)";
+  ctx2d.beginPath(); ctx2d.ellipse(0, s * 0.02, s * 0.52, s * 0.10, 0, 0, Math.PI * 2); ctx2d.fill();
+  const sway = Math.sin(now / 480 + rec.hue * 1.7) * s * 0.10;
+  ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = s * 0.11; ctx2d.lineCap = "round";
+  ctx2d.beginPath(); ctx2d.moveTo(-s * 0.34, -s * 0.10);
+  ctx2d.quadraticCurveTo(-s * 0.62, -s * 0.28, -s * 0.55 + sway, -s * 0.52); ctx2d.stroke();
+  // thân ngồi + bụng
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.ellipse(0, -s * 0.34, s * 0.40, s * 0.36, 0, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.fillStyle = coat.belly;
+  ctx2d.beginPath(); ctx2d.ellipse(0, -s * 0.28, s * 0.24, s * 0.25, 0, 0, Math.PI * 2); ctx2d.fill();
+  // đầu + tai
+  const hy = -s * 0.86 + hyOff, hr = s * 0.335;
+  for (const e of [-1, 1]) {
+    ctx2d.fillStyle = coat.base;
+    ctx2d.beginPath();
+    ctx2d.moveTo(e * hr * 0.78, hy - hr * 0.52);
+    ctx2d.lineTo(e * hr * 0.42, hy - hr * 1.22);
+    ctx2d.lineTo(e * hr * 0.05, hy - hr * 0.62);
+    ctx2d.closePath(); ctx2d.fill();
+    ctx2d.fillStyle = coat.ear;
+    ctx2d.beginPath();
+    ctx2d.moveTo(e * hr * 0.60, hy - hr * 0.62);
+    ctx2d.lineTo(e * hr * 0.42, hy - hr * 1.02);
+    ctx2d.lineTo(e * hr * 0.20, hy - hr * 0.64);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.arc(0, hy, hr, 0, Math.PI * 2); ctx2d.fill();
+  if (p.coat === "tabby") {
+    ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = 2;
+    for (const off of [-0.3, 0, 0.3]) {
+      ctx2d.beginPath(); ctx2d.moveTo(off * hr, hy - hr * 0.98); ctx2d.lineTo(off * hr, hy - hr * 0.68); ctx2d.stroke();
+    }
+  }
+  if (p.coat === "calico") {
+    ctx2d.fillStyle = coat.dark; ctx2d.globalAlpha = 0.5;
+    ctx2d.beginPath(); ctx2d.ellipse(-hr * 0.45, hy - hr * 0.45, hr * 0.30, hr * 0.22, 0.4, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.globalAlpha = 1;
+  }
+  // mặt: mắt (nhắm khi ngủ / chớp), mũi, miệng
+  const sleeping = action === "nap";
+  const blink = ((now + rec.hue * 131) % 3400) < 130;
+  ctx2d.strokeStyle = "#3a3230"; ctx2d.fillStyle = "#3a3230"; ctx2d.lineWidth = 2;
+  for (const e of [-1, 1]) {
+    if (sleeping || blink) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(e * hr * 0.42 - hr * 0.16, hy - hr * 0.08);
+      ctx2d.lineTo(e * hr * 0.42 + hr * 0.16, hy - hr * 0.08);
+      ctx2d.stroke();
+    } else {
+      ctx2d.beginPath(); ctx2d.arc(e * hr * 0.42, hy - hr * 0.08, hr * 0.10, 0, Math.PI * 2); ctx2d.fill();
+    }
+  }
+  ctx2d.fillStyle = "#e77e95";
+  ctx2d.beginPath();
+  ctx2d.moveTo(-hr * 0.10, hy + hr * 0.14); ctx2d.lineTo(hr * 0.10, hy + hr * 0.14);
+  ctx2d.lineTo(0, hy + hr * 0.27); ctx2d.closePath(); ctx2d.fill();
+  ctx2d.strokeStyle = "#8a7a72"; ctx2d.lineWidth = 1.4;
+  ctx2d.beginPath(); ctx2d.arc(0, hy + hr * 0.22, hr * 0.17, 0.25 * Math.PI, 0.75 * Math.PI); ctx2d.stroke();
+  // huy chương avatar ở ngực
+  const mr = s * 0.20, my = -s * 0.42;
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.arc(0, my, mr, 0, Math.PI * 2); ctx2d.clip();
+  if (rec.imgOk && rec.img) {
+    ctx2d.drawImage(rec.img, -mr, my - mr, mr * 2, mr * 2);
+  } else {
+    ctx2d.fillStyle = `hsl(${rec.hue}, 65%, 72%)`;
+    ctx2d.fillRect(-mr, my - mr, mr * 2, mr * 2);
+    ctx2d.fillStyle = "#503a10";
+    ctx2d.font = `800 ${mr * 1.05}px sans-serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText((p.nickname || "?").trim().charAt(0).toUpperCase() || "?", 0, my + 1);
+  }
+  ctx2d.restore();
+  ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 2.5;
+  ctx2d.beginPath(); ctx2d.arc(0, my, mr, 0, Math.PI * 2); ctx2d.stroke();
+  // chân trước gõ phím khi "làm" (đặt lên mép bàn)
+  if (action === "work") {
+    ctx2d.fillStyle = coat.base;
+    for (const e of [-1, 1]) {
+      const po = Math.sin(now / 70 + (e > 0 ? Math.PI : 0)) * s * 0.018;
+      ctx2d.beginPath(); ctx2d.ellipse(e * s * 0.20, -s * 0.015 + po, s * 0.085, s * 0.05, 0, 0, Math.PI * 2); ctx2d.fill();
+    }
+  }
+  // vẫy tay gọi Bug
+  if (action === "callbug") {
+    const wave = Math.sin(now / 120) * s * 0.06;
+    ctx2d.fillStyle = coat.base;
+    ctx2d.beginPath(); ctx2d.ellipse(s * 0.47, -s * 0.80 + wave, s * 0.09, s * 0.13, 0.5, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.font = `${s * 0.30}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("🐾", s * 0.62, -s * 1.02 + wave);
+  }
+  // bong bóng chat hướng về bàn bên
+  if (action === "chat") {
+    const dirC = (p.desk % 2 === 0) ? 1 : -1;
+    const bobC = Math.sin(now / 240) * s * 0.03;
+    ctx2d.font = `${s * 0.34}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("💬", dirC * s * 0.58, hy - hr * 1.28 + bobC);
+  }
+  // ngủ gật: 💤 bay lên
+  if (sleeping) {
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    for (let k = 0; k < 2; k++) {
+      const ph = ((now / 1500) + k * 0.5 + (rec.hue % 10) / 20) % 1;
+      ctx2d.globalAlpha = 1 - ph;
+      ctx2d.font = `${s * (0.20 + ph * 0.12)}px serif`;
+      ctx2d.fillText("💤", hr * 0.85 + ph * s * 0.22, hy - hr * 0.9 - ph * s * 0.34);
+    }
+    ctx2d.globalAlpha = 1;
+  }
+  // nghi ngờ cao: cảnh báo trên đầu
+  if ((p.suspicion || 0) >= 60) {
+    const pulse = 1 + Math.sin(now / 160) * 0.15;
+    ctx2d.font = `${s * 0.32 * pulse}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("⚠️", hr * 0.78, hy - hr * 1.30);
+  }
+  ctx2d.restore();
+}
+
+// Mèo bị phạt: đứng úp mặt vào tường ở góc phòng, cầm bảng "EM XIN LỖI".
+function drawOfficeShameCat(rec, x, baseY, s, tagFs) {
+  const p = rec.data;
+  const coat = COATS[p.coat] || COATS.tabby;
+  ctx2d.save();
+  ctx2d.translate(x, baseY);
+  ctx2d.fillStyle = "rgba(60, 30, 10, .20)";
+  ctx2d.beginPath(); ctx2d.ellipse(0, s * 0.02, s * 0.46, s * 0.09, 0, 0, Math.PI * 2); ctx2d.fill();
+  // đuôi cụp buồn bã
+  ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = s * 0.10; ctx2d.lineCap = "round";
+  ctx2d.beginPath(); ctx2d.moveTo(-s * 0.30, -s * 0.12);
+  ctx2d.quadraticCurveTo(-s * 0.52, -s * 0.05, -s * 0.50, s * 0.0); ctx2d.stroke();
+  // lưng + sau đầu (không mặt — đang úp vào tường)
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.ellipse(0, -s * 0.36, s * 0.40, s * 0.38, 0, 0, Math.PI * 2); ctx2d.fill();
+  for (const e of [-1, 1]) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(e * s * 0.26, -s * 1.02);
+    ctx2d.lineTo(e * s * 0.14, -s * 1.36);
+    ctx2d.lineTo(e * s * 0.02, -s * 1.04);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  ctx2d.beginPath(); ctx2d.arc(0, -s * 0.92, s * 0.335, 0, Math.PI * 2); ctx2d.fill();
+  // bảng xin lỗi cầm trước ngực (chữ hướng ra khán giả)
+  const bw = s * 1.02, bh = s * 0.36, byy = -s * 0.46;
+  ctx2d.fillStyle = "#fffdf5";
+  ctx2d.beginPath(); ctx2d.roundRect(-bw / 2, byy - bh / 2, bw, bh, 5); ctx2d.fill();
+  ctx2d.strokeStyle = "#b03030"; ctx2d.lineWidth = 2.5;
+  ctx2d.beginPath(); ctx2d.roundRect(-bw / 2, byy - bh / 2, bw, bh, 5); ctx2d.stroke();
+  ctx2d.fillStyle = "#b03030";
+  ctx2d.font = `800 ${s * 0.175}px sans-serif`;
+  ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  ctx2d.fillText("EM XIN LỖI", 0, byy + 1);
+  // số giây phạt còn lại dưới chân
+  ctx2d.fillStyle = "#7a1f1f";
+  ctx2d.font = `800 ${s * 0.21}px sans-serif`;
+  ctx2d.fillText(`${Math.max(0, Math.ceil(p.penalty_left || 0))}s`, 0, s * 0.17);
+  ctx2d.restore();
+  officeNameTag(x, baseY - s * 1.52, p.nickname || "?", tagFs);
+}
+
+function drawOfficeWindow(cx, top, w, h) {
+  ctx2d.fillStyle = "#8a6f4d";
+  ctx2d.fillRect(cx - w / 2 - 3, top - 3, w + 6, h + 6);
+  const g = ctx2d.createLinearGradient(0, top, 0, top + h);
+  g.addColorStop(0, "#cfeaf7"); g.addColorStop(1, "#e8f7fd");
+  ctx2d.fillStyle = g;
+  ctx2d.fillRect(cx - w / 2, top, w, h);
+  ctx2d.fillStyle = "#8a6f4d";
+  ctx2d.fillRect(cx - 1.5, top, 3, h);
+  // rèm chớp nửa trên cửa sổ
+  ctx2d.fillStyle = "rgba(255, 255, 255, .75)";
+  for (let y = top + 3; y < top + h * 0.52; y += 5) ctx2d.fillRect(cx - w / 2 + 2, y, w - 4, 2.4);
+  // vệt nắng
+  ctx2d.fillStyle = "rgba(255, 236, 170, .35)";
+  ctx2d.beginPath(); ctx2d.arc(cx + w * 0.24, top + h * 0.72, w * 0.13, 0, Math.PI * 2); ctx2d.fill();
+}
+
+function drawOfficeClock(cx, cy, r) {
+  const d = new Date();
+  ctx2d.fillStyle = "#5d4630";
+  ctx2d.beginPath(); ctx2d.arc(cx, cy, r + 3, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.fillStyle = "#fffdf5";
+  ctx2d.beginPath(); ctx2d.arc(cx, cy, r, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.strokeStyle = "#8a7a72"; ctx2d.lineWidth = 1.4;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx2d.beginPath();
+    ctx2d.moveTo(cx + Math.cos(a) * r * 0.86, cy + Math.sin(a) * r * 0.86);
+    ctx2d.lineTo(cx + Math.cos(a) * r * 0.97, cy + Math.sin(a) * r * 0.97);
+    ctx2d.stroke();
+  }
+  const ha = (((d.getHours() % 12) + d.getMinutes() / 60) / 12) * Math.PI * 2 - Math.PI / 2;
+  const ma = ((d.getMinutes() + d.getSeconds() / 60) / 60) * Math.PI * 2 - Math.PI / 2;
+  const sa = (d.getSeconds() / 60) * Math.PI * 2 - Math.PI / 2;
+  ctx2d.strokeStyle = "#2b2b2b"; ctx2d.lineCap = "round";
+  ctx2d.lineWidth = 3.4;
+  ctx2d.beginPath(); ctx2d.moveTo(cx, cy); ctx2d.lineTo(cx + Math.cos(ha) * r * 0.52, cy + Math.sin(ha) * r * 0.52); ctx2d.stroke();
+  ctx2d.lineWidth = 2.4;
+  ctx2d.beginPath(); ctx2d.moveTo(cx, cy); ctx2d.lineTo(cx + Math.cos(ma) * r * 0.78, cy + Math.sin(ma) * r * 0.78); ctx2d.stroke();
+  ctx2d.strokeStyle = "#d7263d"; ctx2d.lineWidth = 1.2;
+  ctx2d.beginPath(); ctx2d.moveTo(cx, cy); ctx2d.lineTo(cx + Math.cos(sa) * r * 0.85, cy + Math.sin(sa) * r * 0.85); ctx2d.stroke();
+  ctx2d.fillStyle = "#2b2b2b";
+  ctx2d.beginPath(); ctx2d.arc(cx, cy, 2.4, 0, Math.PI * 2); ctx2d.fill();
+}
+
+function drawOfficePoster(cx, top, w, h) {
+  ctx2d.fillStyle = "#5d4630";
+  ctx2d.fillRect(cx - w / 2 - 3, top - 3, w + 6, h + 6);
+  ctx2d.fillStyle = "#fff7e0";
+  ctx2d.fillRect(cx - w / 2, top, w, h);
+  ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  ctx2d.fillStyle = "#b03030";
+  ctx2d.font = `900 ${h * 0.21}px sans-serif`;
+  ctx2d.fillText("NỘI QUY", cx, top + h * 0.20);
+  ctx2d.fillStyle = "#2b2b2b";
+  ctx2d.font = `800 ${h * 0.155}px sans-serif`;
+  ctx2d.fillText("CẤM ĂN UỐNG", cx, top + h * 0.44);
+  ctx2d.font = `${h * 0.34}px serif`;
+  ctx2d.fillText("🚫🍜", cx, top + h * 0.74);
+}
+
+function drawOfficePlant(x, baseY, s) {
+  ctx2d.fillStyle = "#3f7d44";
+  for (const [ox, oy, rx, ry, rot] of [[-0.3, -0.95, 0.16, 0.42, -0.5], [0, -1.15, 0.18, 0.52, 0], [0.3, -0.95, 0.16, 0.42, 0.5], [-0.12, -0.8, 0.13, 0.34, -0.25], [0.14, -0.82, 0.13, 0.34, 0.28]]) {
+    ctx2d.beginPath(); ctx2d.ellipse(x + ox * s, baseY + oy * s, rx * s, ry * s, rot, 0, Math.PI * 2); ctx2d.fill();
+  }
+  ctx2d.fillStyle = "#b56545";
+  ctx2d.beginPath();
+  ctx2d.moveTo(x - s * 0.34, baseY - s * 0.52);
+  ctx2d.lineTo(x + s * 0.34, baseY - s * 0.52);
+  ctx2d.lineTo(x + s * 0.24, baseY);
+  ctx2d.lineTo(x - s * 0.24, baseY);
+  ctx2d.closePath(); ctx2d.fill();
+  ctx2d.fillStyle = "#96502f";
+  ctx2d.fillRect(x - s * 0.36, baseY - s * 0.60, s * 0.72, s * 0.09);
+}
+
+function drawOfficeCooler(x, baseY, H) {
+  // cây nước / máy cà phê ở cuối hành lang phải
+  ctx2d.fillStyle = "#eef1f4";
+  ctx2d.beginPath(); ctx2d.roundRect(x - H * 0.016, baseY - H * 0.052, H * 0.032, H * 0.052, 4); ctx2d.fill();
+  ctx2d.fillStyle = "#39424e";
+  ctx2d.fillRect(x - H * 0.010, baseY - H * 0.036, H * 0.020, H * 0.014);
+  ctx2d.fillStyle = "#6cb4ff";
+  ctx2d.beginPath(); ctx2d.arc(x - H * 0.005, baseY - H * 0.029, 1.8, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.fillStyle = "#ff8a7a";
+  ctx2d.beginPath(); ctx2d.arc(x + H * 0.005, baseY - H * 0.029, 1.8, 0, Math.PI * 2); ctx2d.fill();
+  // bình nước trên đầu máy
+  ctx2d.fillStyle = "rgba(140, 200, 245, .75)";
+  ctx2d.beginPath(); ctx2d.roundRect(x - H * 0.012, baseY - H * 0.088, H * 0.024, H * 0.038, 6); ctx2d.fill();
+  ctx2d.fillStyle = "rgba(90, 160, 220, .8)";
+  ctx2d.fillRect(x - H * 0.012, baseY - H * 0.066, H * 0.024, H * 0.016);
+}
+
+function drawOfficeCake(x, topY, W, H, now) {
+  ctx2d.fillStyle = "#e8e4da";
+  ctx2d.beginPath(); ctx2d.ellipse(x, topY - 1, W * 0.030, H * 0.004, 0, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.fillStyle = "#f7a8b8";
+  ctx2d.fillRect(x - W * 0.023, topY - H * 0.013, W * 0.046, H * 0.012);
+  ctx2d.fillStyle = "#fff5f7";
+  ctx2d.fillRect(x - W * 0.018, topY - H * 0.022, W * 0.036, H * 0.009);
+  for (let i = -1; i <= 1; i++) {
+    ctx2d.fillStyle = "#6cb4ff";
+    ctx2d.fillRect(x + i * W * 0.010 - 1, topY - H * 0.027, 2, H * 0.005);
+    ctx2d.fillStyle = "#ffb703";
+    ctx2d.beginPath(); ctx2d.arc(x + i * W * 0.010, topY - H * 0.0285 + Math.sin(now / 90 + i) * 0.8, 2.2, 0, Math.PI * 2); ctx2d.fill();
+  }
+}
+
+// Bug ngồi TRÊN mặt bàn ở bàn bug_desk (ảnh thật trong khung tròn viền vàng)
+function drawOfficeBug(cx, ty, dw, W, H, party) {
+  const bx = cx + dw * 0.335;
+  const r = H * 0.0265;
+  const by = ty - r * 0.60;
+  ctx2d.fillStyle = "#8e6cc8";
+  ctx2d.beginPath(); ctx2d.ellipse(bx, ty + H * 0.002, W * 0.046, H * 0.006, 0, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.arc(bx, by, r, 0, Math.PI * 2); ctx2d.clip();
+  if (bugPhotoImg && bugPhotoImg.complete && bugPhotoImg.naturalWidth > 0) {
+    ctx2d.drawImage(bugPhotoImg, bx - r, by - r, r * 2, r * 2);
+  } else {
+    ctx2d.fillStyle = "#ffe3b3"; ctx2d.fillRect(bx - r, by - r, r * 2, r * 2);
+    ctx2d.font = `${r * 1.1}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("🐱", bx, by);
+  }
+  ctx2d.restore();
+  ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 3;
+  ctx2d.beginPath(); ctx2d.arc(bx, by, r, 0, Math.PI * 2); ctx2d.stroke();
+  if (party) {
+    // mũ tiệc tam giác + bông tua khi đang mở tiệc
+    ctx2d.fillStyle = "#ff5d8f";
+    ctx2d.beginPath();
+    ctx2d.moveTo(bx - r * 0.52, by - r * 0.70);
+    ctx2d.lineTo(bx + r * 0.52, by - r * 0.70);
+    ctx2d.lineTo(bx + r * 0.12, by - r * 1.52);
+    ctx2d.closePath(); ctx2d.fill();
+    ctx2d.fillStyle = "#ffd34d";
+    ctx2d.beginPath(); ctx2d.arc(bx + r * 0.12, by - r * 1.55, r * 0.20, 0, Math.PI * 2); ctx2d.fill();
+  }
+  // nhãn "Bug" nhỏ trên thân bàn
+  ctx2d.font = `700 ${Math.max(10, H * 0.0115)}px sans-serif`;
+  const lw = ctx2d.measureText("Bug").width + 10;
+  ctx2d.fillStyle = "rgba(94, 66, 0, .85)";
+  ctx2d.beginPath(); ctx2d.roundRect(bx - lw / 2, ty + H * 0.008, lw, H * 0.017, 6); ctx2d.fill();
+  ctx2d.fillStyle = "#fff"; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  ctx2d.fillText("Bug", bx, ty + H * 0.0165);
+}
+
+// Một bàn làm việc: ghế + mèo (tối đa 2) + mặt bàn + màn hình/bàn phím +
+// đạo cụ hành động trên bàn + Bug nếu Bug đang ở bàn này.
+function drawOfficeDesk(now, W, H, L, desk, recs, extra, party, bugHere, bugWorld) {
+  const { x: cx, y: ty } = officeDeskXY(desk, L);
+  const dw = L.deskW;
+  const s = H * 0.052;
+  const spots = recs.length <= 1 ? [0] : [-W * 0.088, W * 0.088];
+  // lưng ghế sau mỗi chỗ ngồi
+  ctx2d.fillStyle = "#37414f";
+  for (const off of spots) {
+    ctx2d.beginPath(); ctx2d.roundRect(cx + off - s * 0.46, ty - s * 1.06, s * 0.92, s * 0.72, 8); ctx2d.fill();
+  }
+  // mèo nhân viên (ngồi hơi cao trên ghế để mặt + huy chương không bị màn hình che)
+  recs.forEach((rec, i) => drawOfficeCat(rec, cx + spots[i], ty - H * 0.006, s, now, party));
+  // mặt bàn + thân bàn gỗ
+  const grad = ctx2d.createLinearGradient(0, ty, 0, ty + H * 0.048);
+  grad.addColorStop(0, "#c49a68"); grad.addColorStop(0.25, "#b08954"); grad.addColorStop(1, "#8a683c");
+  ctx2d.fillStyle = grad;
+  ctx2d.fillRect(cx - dw / 2, ty, dw, H * 0.048);
+  ctx2d.fillStyle = "rgba(255,255,255,.25)";
+  ctx2d.fillRect(cx - dw / 2, ty, dw, 2);
+  ctx2d.fillStyle = "rgba(70, 45, 15, .35)";
+  ctx2d.fillRect(cx - dw / 2, ty + H * 0.048, dw, 3);
+  // màn hình + bàn phím theo chỗ ngồi, lệch sang phải của mèo để mặt mèo
+  // và huy chương avatar không bị màn hình che (bàn trống: 1 màn hình tối)
+  const monSpots = recs.length ? spots : [0];
+  monSpots.forEach((off, i) => {
+    const rec = recs[i];
+    const working = !!(rec && (rec.data.action_left || 0) > 0 && rec.data.action === "work");
+    const mx = cx + off + (recs.length <= 1 ? W * 0.060 : W * 0.048), mw = W * 0.098, mh = H * 0.037;
+    ctx2d.fillStyle = "#222a35";
+    ctx2d.beginPath(); ctx2d.roundRect(mx - mw / 2, ty - mh, mw, mh, 4); ctx2d.fill();
+    if (working) {
+      // màn hình sáng với dòng code khi mèo đang "làm"
+      ctx2d.fillStyle = "#10222e";
+      ctx2d.fillRect(mx - mw / 2 + 3, ty - mh + 3, mw - 6, mh - 6);
+      const cols = ["#57d977", "#6cb4ff", "#ffd34d", "#57d977"];
+      for (let r = 0; r < 4; r++) {
+        const lw2 = (0.25 + detRand(desk * 31 + i * 7 + r * 3) * 0.6) * (mw - 12);
+        ctx2d.fillStyle = cols[r % cols.length];
+        ctx2d.globalAlpha = 0.9;
+        ctx2d.fillRect(mx - mw / 2 + 6 + (r % 2) * 5, ty - mh + 6 + r * (mh - 12) / 4, lw2, 2.4);
+      }
+      ctx2d.globalAlpha = 1;
+      if ((now % 900) < 480) {
+        ctx2d.fillStyle = "#aef2c0";
+        ctx2d.fillRect(mx - mw / 2 + 6, ty - 7, 5, 2.4);
+      }
+    } else {
+      ctx2d.fillStyle = "#39424e";
+      ctx2d.fillRect(mx - mw / 2 + 3, ty - mh + 3, mw - 6, mh - 6);
+      ctx2d.strokeStyle = "rgba(255,255,255,.13)"; ctx2d.lineWidth = 3;
+      ctx2d.beginPath(); ctx2d.moveTo(mx - mw * 0.28, ty - 4); ctx2d.lineTo(mx + mw * 0.05, ty - mh + 4); ctx2d.stroke();
+    }
+    ctx2d.fillStyle = "#222a35";
+    ctx2d.fillRect(mx - W * 0.020, ty, W * 0.040, H * 0.004);
+    ctx2d.fillStyle = "#d8dce1";
+    ctx2d.beginPath(); ctx2d.roundRect(mx - W * 0.045, ty + H * 0.008, W * 0.09, H * 0.009, 2); ctx2d.fill();
+  });
+  // đạo cụ hành động trên bàn của từng mèo
+  recs.forEach((rec, i) => {
+    const p = rec.data;
+    if ((p.action_left || 0) <= 0) return;
+    const ax = cx + spots[i];
+    if (p.action === "eat") {
+      // bát mì ở mép bàn + đũa + vụn bánh quanh bát
+      const bx2 = ax + W * 0.045, by2 = ty + H * 0.007;
+      ctx2d.fillStyle = "#e2574c";
+      ctx2d.beginPath(); ctx2d.ellipse(bx2, by2, W * 0.020, H * 0.0075, 0, 0, Math.PI); ctx2d.fill();
+      ctx2d.fillStyle = "#ffe9b0";
+      ctx2d.beginPath(); ctx2d.ellipse(bx2, by2, W * 0.020, H * 0.004, 0, 0, Math.PI * 2); ctx2d.fill();
+      ctx2d.strokeStyle = "#8a5a2b"; ctx2d.lineWidth = 2;
+      ctx2d.beginPath(); ctx2d.moveTo(bx2 + W * 0.006, by2 - H * 0.004); ctx2d.lineTo(bx2 + W * 0.016, by2 - H * 0.016); ctx2d.stroke();
+      ctx2d.fillStyle = "#c98d4b";
+      for (let c = 0; c < 3; c++) {
+        ctx2d.beginPath();
+        ctx2d.arc(bx2 - W * 0.02 + detRand(desk * 13 + i * 5 + c) * W * 0.03,
+          ty + H * 0.013 + detRand(c * 7 + desk) * H * 0.006, 1.6, 0, Math.PI * 2);
+        ctx2d.fill();
+      }
+    } else if (p.action === "game") {
+      // điện thoại phát sáng giấu dưới mép bàn
+      ctx2d.save();
+      ctx2d.translate(ax - W * 0.01, ty + H * 0.032); ctx2d.rotate(-0.12);
+      ctx2d.fillStyle = "rgba(140, 200, 255, .30)";
+      ctx2d.fillRect(-W * 0.020, -H * 0.011, W * 0.040, H * 0.022);
+      ctx2d.fillStyle = "#bfe6ff";
+      ctx2d.fillRect(-W * 0.014, -H * 0.008, W * 0.028, H * 0.016);
+      ctx2d.restore();
+    } else if (p.action === "work") {
+      if (((now / 1500) + (rec.hue % 10) / 10) % 1 < 0.30) {
+        ctx2d.font = `${H * 0.016}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+        ctx2d.fillText("✅", ax + W * 0.055, ty - H * 0.048);
+      }
+    } else if (p.action === "feedbug" && bugWorld) {
+      // tim bay từ mèo tới chỗ Bug đang ngồi
+      const hx0 = ax, hy0 = ty - s * 0.95;
+      ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+      for (let k = 0; k < 3; k++) {
+        const pr = ((now / 1100) + k / 3 + (rec.hue % 10) / 13) % 1;
+        const fx = hx0 + (bugWorld.x - hx0) * pr;
+        const fy = hy0 + (bugWorld.y - hy0) * pr - Math.sin(pr * Math.PI) * H * 0.022;
+        ctx2d.globalAlpha = 1 - pr * 0.45;
+        ctx2d.font = `${H * 0.015}px serif`;
+        ctx2d.fillText("💗", fx, fy);
+      }
+      ctx2d.globalAlpha = 1;
+    }
+  });
+  // thẻ tên trên đầu mỗi mèo
+  recs.forEach((rec, i) => {
+    officeNameTag(cx + spots[i], ty - s * 1.50, rec.data.nickname || "?", Math.max(11, H * 0.0135));
+  });
+  if (extra > 0) {
+    const chipX = cx + dw / 2 - W * 0.028, chipY = ty - H * 0.052;
+    ctx2d.fillStyle = "rgba(18, 24, 38, .82)";
+    ctx2d.beginPath(); ctx2d.roundRect(chipX - W * 0.020, chipY - H * 0.010, W * 0.040, H * 0.020, 8); ctx2d.fill();
+    ctx2d.fillStyle = "#ffd34d"; ctx2d.font = `800 ${H * 0.013}px sans-serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText(`+${extra}`, chipX, chipY + 1);
+  }
+  if (bugHere) drawOfficeBug(cx, ty, dw, W, H, party);
+}
+
+function drawOfficeScene(now, W, H, dt) {
+  const L = officeLayout(W, H);
+  const o = officeState;
+  const b = officeBoss;
+  const party = !!(o && o.party_active);
+  ctx2d.save();
+  if (now < officeFx.shakeUntil) { // bị bắt quả tang: rung màn hình ~320ms
+    const k = Math.max(0, (officeFx.shakeUntil - now) / 320);
+    ctx2d.translate((Math.random() - 0.5) * W * 0.012 * k, (Math.random() - 0.5) * H * 0.008 * k);
+  }
+  // --- dải tối phía trên tường (nằm sau title/panel) ---
+  ctx2d.fillStyle = "#5d5148";
+  ctx2d.fillRect(-W * 0.02, 0, W * 1.04, H);
+  // --- tường ấm + cửa sổ + đồng hồ + poster nội quy ---
+  const wall = ctx2d.createLinearGradient(0, L.wallTop, 0, L.wallBot);
+  wall.addColorStop(0, "#efe0c2"); wall.addColorStop(1, "#e2cda1");
+  ctx2d.fillStyle = wall;
+  ctx2d.fillRect(0, L.wallTop, W, L.wallBot - L.wallTop);
+  for (const wx of L.winX) drawOfficeWindow(wx, L.wallTop + H * 0.014, W * 0.15, H * 0.078);
+  drawOfficeClock(L.clockX, L.wallTop + H * 0.052, W * 0.031);
+  drawOfficePoster(L.posterX, L.wallTop + H * 0.014, W * 0.165, H * 0.078);
+  ctx2d.fillStyle = "#f7efdd";
+  ctx2d.fillRect(0, L.wallBot - H * 0.007, W, H * 0.007);
+  // --- sàn gỗ sáng + thảm chạy hành lang ---
+  const floor = ctx2d.createLinearGradient(0, L.wallBot, 0, H);
+  floor.addColorStop(0, "#dcbd8d"); floor.addColorStop(1, "#c9a26b");
+  ctx2d.fillStyle = floor;
+  ctx2d.fillRect(0, L.wallBot, W, H - L.wallBot);
+  ctx2d.fillStyle = "#8e4a5b";
+  ctx2d.beginPath(); ctx2d.roundRect(W * 0.03, L.wallBot + H * 0.012, W * 0.94, L.corrBot - L.wallBot - H * 0.020, 10); ctx2d.fill();
+  ctx2d.strokeStyle = "rgba(255, 220, 170, .35)"; ctx2d.lineWidth = 2;
+  ctx2d.beginPath(); ctx2d.roundRect(W * 0.045, L.wallBot + H * 0.018, W * 0.91, L.corrBot - L.wallBot - H * 0.032, 8); ctx2d.stroke();
+  ctx2d.strokeStyle = "rgba(120, 80, 30, .13)"; ctx2d.lineWidth = 1.5;
+  for (let y = L.corrBot + H * 0.03; y < H; y += H * 0.052) {
+    ctx2d.beginPath(); ctx2d.moveTo(0, y); ctx2d.lineTo(W, y); ctx2d.stroke();
+  }
+  // giấy tờ rơi vãi trên sàn (tĩnh theo detRand)
+  ctx2d.fillStyle = "rgba(255, 252, 244, .55)";
+  for (let i = 0; i < 7; i++) {
+    const px = detRand(i * 3 + 1) * W * 0.9 + W * 0.05;
+    const py = H * 0.70 + detRand(i * 7 + 2) * H * 0.22;
+    ctx2d.save(); ctx2d.translate(px, py); ctx2d.rotate((detRand(i + 9) - 0.5) * 0.9);
+    ctx2d.fillRect(-W * 0.016, -H * 0.006, W * 0.032, H * 0.012);
+    ctx2d.restore();
+  }
+  // thảm + cây xanh ở khoảng trống dưới sân (giữa 2 panel dưới)
+  ctx2d.fillStyle = "rgba(142, 74, 91, .30)";
+  ctx2d.beginPath(); ctx2d.ellipse(W * 0.5, H * 0.925, W * 0.27, H * 0.020, 0, 0, Math.PI * 2); ctx2d.fill();
+  for (const px of [W * 0.045, W * 0.955]) drawOfficePlant(px, H * 0.972, H * 0.05);
+
+  // --- gom mèo theo bàn / góc phạt ---
+  const byDesk = new Map();
+  const penalized = [];
+  for (const rec of players.values()) {
+    const p = rec.data;
+    if ((p.penalty_left || 0) > 0) { penalized.push(rec); continue; }
+    const d = Math.max(0, Math.min(7, typeof p.desk === "number" ? p.desk : 0));
+    if (!byDesk.has(d)) byDesk.set(d, []);
+    byDesk.get(d).push(rec);
+  }
+  for (const arr of byDesk.values()) {
+    arr.sort((a, z) => (((z.data.action_left || 0) > 0) - ((a.data.action_left || 0) > 0))
+      || ((z.data.office_pts_total || 0) - (a.data.office_pts_total || 0)));
+  }
+  // GÓC PHẠT: tối đa 3 mèo úp mặt vào tường ở góc phải, thừa thì +n
+  penalized.slice(0, 3).forEach((rec, i) => {
+    drawOfficeShameCat(rec, W * 0.795 + i * W * 0.058, L.wallBot, H * 0.036, Math.max(10, H * 0.012));
+  });
+  if (penalized.length > 3) {
+    ctx2d.fillStyle = "rgba(18, 24, 38, .82)";
+    ctx2d.beginPath(); ctx2d.roundRect(W * 0.952, L.wallBot - H * 0.034, W * 0.040, H * 0.020, 8); ctx2d.fill();
+    ctx2d.fillStyle = "#ffd34d"; ctx2d.font = `800 ${H * 0.013}px sans-serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText(`+${penalized.length - 3}`, W * 0.972, L.wallBot - H * 0.024);
+  }
+
+  // --- vị trí + trạng thái hiển thị của sếp ---
+  // x backend 0.12..0.88 ánh xạ vào hành lang 0.30W..0.955W để sếp không
+  // chui khuất sau panel thống kê ở góc trái trên
+  const bState = b ? b.state : "patrol";
+  const patrolX = W * (0.30 + (((b ? b.x : 0.5) - 0.12) / 0.76) * 0.655);
+  let bossX = patrolX;
+  let bossDir = b && b.facing === "left" ? -1 : 1;
+  let bossOpts = {};
+  let bossAtDesk = false;
+  let bossGlyph = null;
+  if (bState === "party") { bossX = L.bossDeskX; bossAtDesk = true; bossDir = 1; bossGlyph = "🎵"; }
+  else if (bState === "cake") { bossX = L.bossDeskX; bossAtDesk = true; bossDir = 1; bossOpts = { bent: true }; bossGlyph = "🎂"; }
+  else if (bState === "coffee") { bossX = L.coolerX - W * 0.048; bossDir = 1; bossOpts = { cupUp: true }; bossGlyph = "💭☕"; }
+  else if (bState === "distracted" && b) {
+    if (b.kind === "coffee") { bossX = L.coolerX - W * 0.048; bossDir = 1; bossOpts = { cupUp: true }; bossGlyph = "💭☕"; }
+    else if (b.kind === "phone") { bossOpts = { phone: true }; bossGlyph = "📱"; }
+    else { // ngắm cửa sổ: đứng quay lưng ở cửa sổ gần nhất
+      bossX = Math.abs(L.winX[0] - patrolX) < Math.abs(L.winX[1] - patrolX) ? L.winX[0] : L.winX[1];
+      bossOpts = { back: true }; bossDir = 1;
+    }
+  } else if (bState === "patrol") bossOpts = { walk: true };
+  const bossS = H * 0.092;
+  const bossDeskTopY = H * 0.274;
+  const drawBossDesk = (withCake) => {
+    const bx0 = L.bossDeskX - W * 0.125;
+    ctx2d.fillStyle = "#fdfcf7";
+    ctx2d.fillRect(bx0 + W * 0.018, bossDeskTopY - H * 0.007, W * 0.052, H * 0.007);
+    ctx2d.fillStyle = "#e8e4da";
+    ctx2d.fillRect(bx0 + W * 0.022, bossDeskTopY - H * 0.010, W * 0.052, H * 0.004);
+    ctx2d.fillStyle = "#6e4f30";
+    ctx2d.fillRect(bx0, bossDeskTopY, W * 0.25, H * 0.009);
+    ctx2d.fillStyle = "#54382a";
+    ctx2d.fillRect(bx0, bossDeskTopY + H * 0.009, W * 0.25, H * 0.036);
+    // biển tên "SẾP" mạ vàng trên thân bàn
+    ctx2d.fillStyle = "#d9a441";
+    ctx2d.beginPath(); ctx2d.roundRect(L.bossDeskX - W * 0.037, bossDeskTopY + H * 0.016, W * 0.074, H * 0.017, 3); ctx2d.fill();
+    ctx2d.fillStyle = "#3a2503";
+    ctx2d.font = `900 ${H * 0.0125}px sans-serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("SẾP", L.bossDeskX, bossDeskTopY + H * 0.0245);
+    if (withCake) drawOfficeCake(L.bossDeskX + W * 0.072, bossDeskTopY, W, H, now);
+  };
+  const drawBoss = (baseY) => {
+    ctx2d.fillStyle = "rgba(60, 35, 10, .20)";
+    ctx2d.beginPath(); ctx2d.ellipse(bossX, baseY + 2, bossS * 0.42, bossS * 0.06, 0, 0, Math.PI * 2); ctx2d.fill();
+    drawOfficeBossRat(bossX, baseY, bossS, bossDir, b, now, bossOpts);
+  };
+  drawOfficeCooler(L.coolerX, L.corrBot, H);
+  if (bossAtDesk) {
+    drawBoss(H * 0.317); // đứng sau bàn sếp (bàn vẽ sau, che chân)
+    drawBossDesk(bState === "cake" || bState === "party");
+  } else {
+    drawBossDesk(false);
+  }
+
+  // --- 8 bàn làm việc (vẽ hàng trên trước) ---
+  const bugDesk = o ? (o.bug_desk || 0) : 0;
+  const bugXY = officeDeskXY(bugDesk, L);
+  const bugWorld = { x: bugXY.x + L.deskW * 0.335, y: bugXY.y - H * 0.016 };
+  for (let desk = 0; desk < 8; desk++) {
+    const all = byDesk.get(desk) || [];
+    drawOfficeDesk(now, W, H, L, desk, all.slice(0, 2), Math.max(0, all.length - 2), party, desk === bugDesk, bugWorld);
+  }
+
+  // --- nón tầm nhìn mờ vàng khi sếp đang soi về phía bàn ---
+  if (bState === "watch") {
+    const apexX = bossX + bossDir * bossS * 0.25, apexY = L.bossBase - bossS * 0.82;
+    ctx2d.fillStyle = "rgba(255, 226, 92, .17)";
+    ctx2d.beginPath();
+    ctx2d.moveTo(apexX, apexY);
+    ctx2d.lineTo(bossX + bossDir * W * 0.34, H * 0.335);
+    ctx2d.lineTo(bossX + bossDir * W * 0.36, H * 0.60);
+    ctx2d.lineTo(bossX + bossDir * W * 0.04, H * 0.44);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  // --- sếp đi tuần / đứng hành lang ---
+  if (!bossAtDesk) {
+    drawBoss(L.bossBase);
+    if (bState === "watch") {
+      ctx2d.font = `${H * 0.026}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+      ctx2d.fillText("👀", bossX, L.bossBase - bossS * 1.18);
+    } else if (bState === "patrol" && (now % 5200) < 800) {
+      ctx2d.globalAlpha = 0.85;
+      ctx2d.font = `${H * 0.020}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+      ctx2d.fillText("👀", bossX, L.bossBase - bossS * 1.16);
+      ctx2d.globalAlpha = 1;
+    }
+  }
+  if (bossGlyph) {
+    ctx2d.font = `${H * 0.022}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    const gy = (bossAtDesk ? H * 0.317 : L.bossBase) - bossS * 1.24;
+    if (bossGlyph === "🎵") {
+      ctx2d.fillText("🎵", bossX - W * 0.035, gy + Math.sin(now / 260) * H * 0.004);
+      ctx2d.fillText("🎶", bossX + W * 0.038, gy + H * 0.008 + Math.cos(now / 300) * H * 0.004);
+    } else {
+      ctx2d.fillText(bossGlyph, bossX, gy + Math.sin(now / 300) * H * 0.003);
+    }
+  }
+
+  // --- tiệc văn phòng: quầng đèn disco quay ở mép + pháo giấy rơi ---
+  if (party) {
+    const hue = (now / 30) % 360;
+    ctx2d.fillStyle = `hsla(${hue}, 85%, 60%, .07)`;
+    ctx2d.fillRect(0, 0, W, H);
+    ctx2d.fillStyle = `hsla(${hue}, 90%, 62%, .20)`;
+    ctx2d.fillRect(0, 0, W, H * 0.018);
+    ctx2d.fillRect(0, H * 0.982, W, H * 0.018);
+    ctx2d.fillStyle = `hsla(${(hue + 120) % 360}, 90%, 62%, .20)`;
+    ctx2d.fillRect(0, 0, W * 0.014, H);
+    ctx2d.fillRect(W * 0.986, 0, W * 0.014, H);
+    if (now - officeFx.lastPartySpawn > 110) {
+      officeFx.lastPartySpawn = now;
+      officeFx.confetti.push(...makeOfficeConfetti(3, W, H));
+    }
+  }
+  officeFx.confetti = officeFx.confetti.filter((pt) => pt.t < 9 && pt.y < H * 1.05);
+  for (const pt of officeFx.confetti) {
+    pt.t += dt;
+    pt.y += pt.vy * dt;
+    pt.x += (pt.vx + Math.sin(pt.t * 3.2 + pt.rot * 3) * W * 0.012) * dt;
+    pt.rot += pt.vr * dt;
+    ctx2d.save();
+    ctx2d.translate(pt.x, pt.y); ctx2d.rotate(pt.rot);
+    ctx2d.fillStyle = pt.col;
+    ctx2d.fillRect(-pt.sz / 2, -pt.sz / 3, pt.sz, pt.sz * 0.66);
+    ctx2d.restore();
+  }
+  ctx2d.restore();
+}
+
 let lastFrame = performance.now();
 function draw(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
@@ -3225,6 +4124,13 @@ function draw(now) {
   // chế độ Kéo Co dùng cảnh riêng hoàn toàn
   if (stageMode === "tug") {
     drawTugScene(now, W, H, dt);
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  // chế độ Văn Phòng Lén Lút dùng cảnh riêng hoàn toàn
+  if (stageMode === "office") {
+    drawOfficeScene(now, W, H, dt);
     requestAnimationFrame(draw);
     return;
   }
@@ -3456,6 +4362,15 @@ function handle(msg) {
         meow.play("happy");
         break;
       }
+      if (stageMode === "office") {
+        // Văn Phòng: không cưỡi xe / spotlight / mưa cá — quà nhỏ làm sếp
+        // xao lãng ăn bánh, quà to mở tiệc mini, quà thường cộng Quỹ Ăn Vụng
+        // (do sự kiện office_cake / office_party báo riêng)
+        ticker(`🎁 ${msg.player.nickname} tặng ${msg.gift_name}!`);
+        logEvent(`🎁 ${msg.player.nickname} tặng ${msg.gift_name}`);
+        meow.play("happy");
+        break;
+      }
       const d = msg.diamond_count || 1;
       rec.mount = d >= 50 ? "🦖" : d >= 10 ? "🛵" : "🛒";
       rec.mountUntil = performance.now() + 20000;
@@ -3484,6 +4399,12 @@ function handle(msg) {
       if (stageMode === "tug") {
         // Kéo Co: không có chó đuổi — follow được sắp vào đội ít người hơn
         // và cộng tinh thần, do sự kiện tug_follow báo riêng ngay sau đây
+        meow.play("happy");
+        break;
+      }
+      if (stageMode === "office") {
+        // Văn Phòng: không có chó đuổi — follow là nhận bàn chính thức,
+        // do sự kiện office_join báo riêng ngay sau đây
         meow.play("happy");
         break;
       }
@@ -3650,6 +4571,75 @@ function handle(msg) {
         ? `🏆 Hết hiệp ${msg.round}: Đội ${TUG_TEAM_NAMES[msg.winner]} thắng!`
         : `🤝 Hiệp ${msg.round} hoà!`);
       logEvent(`🏆 Hiệp ${msg.round}: ${msg.winner && msg.winner !== "draw" ? `Đội ${TUG_TEAM_NAMES[msg.winner]} thắng` : "Hoà"}${msg.mvp_name ? ` • 💪 ${msg.mvp_name} (${msg.mvp_force} lực)` : ""}`, true);
+      meow.play("chorus");
+      break;
+    case "office_action": {
+      const nm = msg.name || "Ai đó";
+      const txt = {
+        eat: `🍜 ${nm} ăn vụng +${msg.pts}${msg.safe ? " (sếp đi vắng — nhân đôi!)" : ""}`,
+        chat: `💬 ${nm} tán gẫu với bạn bàn bên +${msg.pts}`,
+        game: `🎮 ${nm} chơi game giấu dưới bàn +${msg.pts}`,
+        work: `💻 ${nm} giả vờ chăm chỉ +${msg.pts} (nghi ngờ giảm)`,
+        nap: `😴 ${nm} ngủ gật +${msg.pts}`,
+        feedbug: `🐱 ${nm} cho Bug ăn +${msg.pts}`,
+        callbug: `🐾 ${nm} gọi Bug tới bàn +${msg.pts}`,
+      }[msg.action] || `🏢 ${nm} lén lút +${msg.pts}`;
+      ticker(txt);
+      logEvent(txt);
+      break;
+    }
+    case "office_warn":
+      ticker(`⚠️ ${msg.name} bị sếp để ý rồi (nghi ngờ ${msg.suspicion}%) — cẩn thận!`);
+      logEvent(`⚠️ ${msg.name} nghi ngờ ${msg.suspicion}%`);
+      break;
+    case "office_caught": {
+      // Bong bóng thoại sếp quát ~3.5s + rung màn hình
+      const elO = $("officeBubble");
+      elO.textContent = "💬 " + (msg.boss_line || "Bắt quả tang!");
+      elO.classList.remove("hidden");
+      clearTimeout(officeBubbleTimer);
+      officeBubbleTimer = setTimeout(() => elO.classList.add("hidden"), 3500);
+      officeFx.shakeUntil = performance.now() + 320;
+      ticker(`🚨 ${msg.name} BỊ SẾP BẮT (${msg.action}) — ra góc phạt 20s!`);
+      logEvent(`🚨 ${msg.name} bị bắt quả tang!`, true);
+      meow.play("kitten");
+      break;
+    }
+    case "office_safe": {
+      const txtS = {
+        coffee: "☕ Sếp đi pha cà phê — LÉN THÔI CẢ NHÀ!",
+        phone: "📱 Sếp đang nghe điện thoại — cơ hội lén!",
+        window: "🪟 Sếp mải ngắm cửa sổ — lén thôi cả nhà!",
+      }[msg.kind] || "😎 Sếp xao lãng — lén thôi cả nhà!";
+      ticker(txtS);
+      logEvent(txtS);
+      break;
+    }
+    case "office_coffee":
+      ticker("☕ Rót cà phê đủ 200 tim — sếp đi nghỉ 15s, cả phòng TỰ DO!");
+      logEvent("☕ Sếp đi nghỉ pha cà phê!", true);
+      meow.play("happy");
+      break;
+    case "office_cake":
+      ticker(`🎂 ${msg.name} tặng bánh — sếp mải ăn bánh, cả phòng an toàn 10s!`);
+      logEvent(`🎂 ${msg.name} tặng bánh cho sếp`, true);
+      break;
+    case "office_party":
+      officeFx.confetti.push(...makeOfficeConfetti(46, canvas.width, canvas.height));
+      ticker(msg.source === "gift"
+        ? `🎉 ${msg.name} mở TIỆC MINI ngay tại văn phòng!`
+        : "🎉 Quỹ ăn vụng đủ 500 — TIỆC VĂN PHÒNG CHÍNH THỨC MỞ!");
+      logEvent("🎉 TIỆC VĂN PHÒNG!", true);
+      meow.play("chorus");
+      break;
+    case "office_join":
+      ticker(`🏢 ${msg.name} nhận bàn ${(msg.desk || 0) + 1} — nhân viên mới vào văn phòng!`);
+      logEvent(`🏢 ${msg.name} vào văn phòng (bàn ${(msg.desk || 0) + 1})`);
+      break;
+    case "office_shift_end":
+      officeShiftEnd = { ...msg };
+      ticker(`📋 Hết ca ${msg.shift}! Vua lén lút: ${msg.top_name || "—"} (${msg.top_pts || 0} điểm)`);
+      logEvent(`📋 Hết ca ${msg.shift}: 🏆 ${msg.top_name || "—"} ${msg.top_pts || 0} điểm${msg.most_caught_name ? ` • 🚨 ${msg.most_caught_name} bị bắt ${msg.most_caught} lần` : ""}`, true);
       meow.play("chorus");
       break;
     case "share": logEvent(`🔁 ${msg.player.nickname} chia sẻ live`); break;

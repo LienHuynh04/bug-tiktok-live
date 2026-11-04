@@ -207,6 +207,7 @@ function setModeUI(mode) {
   $("modeGarden").classList.toggle("primary", mode === "garden");
   $("modeMiner").classList.toggle("primary", mode === "miner");
   $("modeTug").classList.toggle("primary", mode === "tug");
+  $("modeOffice").classList.toggle("primary", mode === "office");
 }
 $("modeRun").onclick = async () => {
   await post("/api/config", { stage_mode: "run" });
@@ -232,6 +233,11 @@ $("modeTug").onclick = async () => {
   await post("/api/config", { stage_mode: "tug" });
   setModeUI("tug");
   log("Chế độ sân khấu: 🪢 Kéo Co — Đội Mèo Cam vs Đội Mèo Xám");
+};
+$("modeOffice").onclick = async () => {
+  await post("/api/config", { stage_mode: "office" });
+  setModeUI("office");
+  log("Chế độ sân khấu: 🏢 SẾP ĐI RỒI! — Văn Phòng Lén Lút");
 };
 $("bossMaxHp").onchange = async () => {
   await post("/api/config", { boss_max_hp: Number($("bossMaxHp").value) || 1000 });
@@ -300,4 +306,9 @@ ws.onmessage = (ev) => {
   else if (msg.type === "tug_drums") log("🪢🥁 Trống hội nổi lên — cả hai đội kéo mạnh hẳn!");
   else if (msg.type === "tug_super") log("🪢💥 Siêu Giật — Đội " + (msg.team === "cam" ? "Mèo Cam" : "Mèo Xám") + " giật cờ một đoạn dài (quà của " + msg.name + ")!");
   else if (msg.type === "tug_buff") log("🪢⚡ Buff sức ×" + msg.mult + " cho Đội " + (msg.team === "cam" ? "Mèo Cam" : "Mèo Xám") + " (quà của " + msg.name + ")");
+  else if (msg.type === "office_caught") log("🏢🚨 " + msg.name + " BỊ SẾP BẮT (" + msg.action + ") — sếp quát: " + (msg.boss_line || ""));
+  else if (msg.type === "office_party") log("🏢🎉 TIỆC VĂN PHÒNG mở (" + (msg.source === "gift" ? "quà của " + msg.name : "quỹ ăn vụng đủ 500") + ")!");
+  else if (msg.type === "office_shift_end") log("🏢📋 Hết ca " + msg.shift + ": 🏆 Vua lén lút " + (msg.top_name || "—") + " (" + (msg.top_pts || 0) + " điểm)" + (msg.most_caught_name ? " • 🚨 " + msg.most_caught_name + " bị bắt " + msg.most_caught + " lần" : ""));
+  else if (msg.type === "office_coffee") log("🏢☕ Đủ 200 tim rót cà phê — sếp đi nghỉ 15s, cả phòng tự do!");
+  else if (msg.type === "office_cake") log("🏢🎂 " + msg.name + " tặng bánh — sếp mải ăn bánh 10s");
 };
