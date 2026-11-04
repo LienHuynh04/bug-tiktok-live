@@ -8,6 +8,7 @@ trả về danh sách "effect dict" để app.py broadcast xuống stage.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -26,6 +27,50 @@ def normalize(text: str) -> str:
     text = text.replace("đ", "d")
     text = re.sub(r"[^a-z0-9 ]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+# --- Vườn Mèo: 6 tính cách mèo + Mèo Vàng hiếm -------------------------------
+# Mỗi người xem là một bé mèo với tính cách riêng: gán ỔN ĐỊNH theo tên
+# (hash chuẩn hoá) nên vào lại phòng vẫn giữ nguyên tính cách cũ.
+PERSONALITIES = {
+    "foodie": {"name": "Ham Ăn", "icon": "🍚", "coat": "tabby"},
+    "sleepy": {"name": "Lười Ngủ", "icon": "😴", "coat": "grey"},
+    "hyper": {"name": "Tăng Động", "icon": "🧶", "coat": "calico"},
+    "diva": {"name": "Chảnh", "icon": "💅", "coat": "white"},
+    "shy": {"name": "Nhút Nhát", "icon": "🌿", "coat": "cream"},
+    "fishy": {"name": "Mê Cá", "icon": "🐟", "coat": "brownwhite"},
+}
+PERSONALITY_KEYS = ["foodie", "sleepy", "hyper", "diva", "shy", "fishy"]
+GOLD_INFO = {"name": "Mèo Vàng", "icon": "👑", "coat": "gold"}
+
+
+def personality_info(key: str) -> dict:
+    if key == "gold":
+        return GOLD_INFO
+    return PERSONALITIES.get(key or "", {"name": "", "icon": "", "coat": ""})
+
+
+def personality_for_uid(unique_id: str) -> str:
+    """Tính cách ổn định của một người xem: hash md5 của tên đã chuẩn hoá."""
+    digest = hashlib.md5(normalize(unique_id or "khach").encode("utf-8")).hexdigest()
+    return PERSONALITY_KEYS[int(digest[:8], 16) % len(PERSONALITY_KEYS)]
+
+
+def mood_face_of(happiness: float, sleeping: bool = False) -> str:
+    """Mặt tâm trạng của mèo trong vườn theo độ vui."""
+    if sleeping:
+        return "😴"
+    if happiness >= 75:
+        return "😊"
+    if happiness >= 40:
+        return "🙂"
+    if happiness >= 20:
+        return "😐"
+    return "😾"
+
+
+# Từ khoá khen (đã chuẩn hoá): nghe khen là Chảnh tạo dáng, Nhút Nhát ló đầu ra
+PRAISE_WORDS = ("xinh", "de thuong", "dep qua", "cute", "ngoan qua", "yeu qua")
 
 
 @dataclass
@@ -50,14 +95,32 @@ class Player:
     speed_until: float = 0.0        # theo đồng hồ monotonic
     last_cmd_boost_at: float = 0.0
     last_claw_at: float = 0.0       # cooldown lệnh CÀO ở chế độ Đánh Boss (monotonic)
+    # --- Vườn Mèo: tính cách + trạng thái trong vườn ---
+    personality: str = ""           # foodie|sleepy|hyper|diva|shy|fishy|gold
+    golden: bool = False            # Mèo Vàng hiếm (tim vườn x2 khi có mặt)
+    happiness: float = 60.0         # độ vui trong vườn: 0..100
+    state: str = "idle"             # idle|eat|sleep|play|pose|hide|peek|hoard|feast
+    state_until: float = 0.0        # mốc wall-clock hết trạng thái vườn
+    hearts: int = 0                 # số tim vườn đã sinh ra trong phiên
+    treat_until: float = 0.0        # mốc wall-clock còn hiệu ứng bát đặc biệt (quà)
 
     def eff_speed_mode(self, now_mono: float) -> str:
         if self.speed_mode != "normal" and now_mono >= self.speed_until:
             return "normal"
         return self.speed_mode
 
+    def eff_state(self, now_wall: Optional[float] = None) -> str:
+        """Trạng thái vườn hiệu lực: hết hạn thì tự về idle."""
+        now_wall = time.time() if now_wall is None else now_wall
+        if self.state != "idle" and now_wall >= self.state_until:
+            return "idle"
+        return self.state
+
     def public(self, now_mono: Optional[float] = None) -> dict:
         now_mono = time.monotonic() if now_mono is None else now_mono
+        now_wall = time.time()
+        info = personality_info(self.personality)
+        state = self.eff_state(now_wall)
         return {
             "unique_id": self.unique_id,
             "nickname": self.nickname,
@@ -70,6 +133,17 @@ class Player:
             "distance_km": round(self.distance_m / 1000.0, 2),
             "in_team": self.in_team,
             "speed_mode": self.eff_speed_mode(now_mono),
+            # --- Vườn Mèo ---
+            "personality": self.personality,
+            "personality_name": info["name"],
+            "icon": info["icon"],
+            "coat": info["coat"],
+            "happiness": round(self.happiness),
+            "mood_face": mood_face_of(self.happiness, state == "sleep"),
+            "state": state,
+            "golden": self.golden,
+            "hearts": self.hearts,
+            "treat": now_wall < self.treat_until,
         }
 
 
@@ -204,6 +278,12 @@ IDLE_RUN = ("Cả nhà ơi, gõ meow để nhận một bé mèo mang tên mình
 IDLE_BOSS = ("Cả nhà ơi, gõ CÀO để tấn công Chuột Trùm Răng Sắt cùng Bug nha! Thả tim "
              "nạp Nộ, đủ 200 là mưa cá trút xuống boss. Gõ HẠT cho Bug ăn lấy sức, "
              "gõ NGỦ cho Bug nghỉ một lát nha!")
+OPENING_GARDEN = ("Chào cả nhà đến với Vườn Mèo của Bug! Mỗi bạn là một bé mèo với tính cách riêng — "
+                  "gõ HẠT gọi ăn, gõ CHƠI rủ chơi, khen XINH QUÁ là có mèo tạo dáng liền. "
+                  "Thả tim gom đủ 500 là cả vườn mở tiệc nha!")
+IDLE_GARDEN = ("Cả nhà ơi, đây là Vườn Mèo của Bug — mỗi bé mèo một tính cách! Gõ HẠT gọi mèo ăn, "
+               "gõ CHƠI rủ hội Tăng Động đuổi bóng, gõ NGỦ cho hội Lười đi ngủ, khen XINH QUÁ là "
+               "Chảnh tạo dáng liền. Thả tim gom tim vườn — đủ mục tiêu tim là cả vườn mở tiệc nha!")
 
 # --- Thoại tâm trạng của Bug (xoay vòng cho đỡ lặp) ---
 OVERFEED_LINES = [
@@ -231,6 +311,9 @@ class GameState:
     SYNC_DURATION = 3.0        # đồng loạt kéo dài 3s: mọi đòn cào đau x2
     SYNC_COOLDOWN = 10.0       # sau khi kích hoạt, 10s mới kích hoạt lại được
     COUNTER_INTERVAL = 40.0    # boss phản đòn (quét đuôi) mỗi ~40s nếu đủ người
+    GOLD_CHANCE = 0.02         # tỉ lệ Mèo Vàng khi một người xem lần đầu vào phòng
+    PRAISE_THROTTLE = 3.0      # giây (monotonic) giữa 2 lần cả vườn hưởng ứng lời khen
+    HEART_TICK_SECONDS = 5.0   # nhịp sinh tim vườn (giây giờ game)
     RACE_MIN_PLAYERS = 3
     RACE_MAX_PLAYERS = 8
     RACE_LOBBY_SECONDS = 20
@@ -261,8 +344,19 @@ class GameState:
         self.scores_path = scores_path
         self.rng = rng or random.Random()
         self._next_seat = 0
-        # --- chế độ Đánh Boss ---
-        self.stage_mode = stage_mode if stage_mode in ("run", "boss") else "run"
+        # --- chế độ sân khấu: run | boss | garden ---
+        self.stage_mode = stage_mode if stage_mode in ("run", "boss", "garden") else "run"
+        # --- Vườn Mèo ---
+        self.garden_hearts = 0             # tim vườn đã gom trong phiên
+        self.garden_hearts_goal = 1000     # đủ mốc này -> Giờ Vàng (rồi mốc +1000)
+        self.garden_feast_until = 0.0      # mốc wall-clock Bữa Tiệc Vườn còn mở
+        self.garden_golden_hour_until = 0.0  # mốc wall-clock Giờ Vàng còn hiệu lực
+        self.garden_decor_until = 0.0      # mốc wall-clock vườn còn trang trí (quà)
+        self._garden_heart_acc = 0.0       # dồn dt cho nhịp sinh tim 5s
+        self._garden_last_tick_at: Optional[float] = None  # tick vườn trước (tính dt)
+        self._last_praise_mono = -100.0    # mốc monotonic lời khen hưởng ứng gần nhất
+        self._golden_rolled: set = set()   # uid đã tung xúc xắc Mèo Vàng trong phiên
+        self._golden_announced: set = set()  # uid Mèo Vàng đã được xướng tên
         self.boss = Boss(boss_max_hp)
         self.damage_by_user: Dict[str, int] = {}   # sát thương cộng dồn trong phiên
         self.boss_total_damage = 0                 # gồm cả sát thương mưa cá (cả đội)
@@ -299,11 +393,178 @@ class GameState:
     # ------------------------------------------------------- tâm trạng Bug
     def opening_line(self) -> str:
         """Câu hướng dẫn đọc mở màn khi live kết nối / DEMO bắt đầu — theo chế độ."""
-        return OPENING_BOSS if self.stage_mode == "boss" else OPENING_RUN
+        if self.stage_mode == "boss":
+            return OPENING_BOSS
+        if self.stage_mode == "garden":
+            return OPENING_GARDEN
+        return OPENING_RUN
 
     def idle_line(self) -> str:
         """Câu nhắc luật khi live im lặng lâu — theo chế độ sân khấu."""
-        return IDLE_BOSS if self.stage_mode == "boss" else IDLE_RUN
+        if self.stage_mode == "boss":
+            return IDLE_BOSS
+        if self.stage_mode == "garden":
+            return IDLE_GARDEN
+        return IDLE_RUN
+
+    # ------------------------------------------------------- Vườn Mèo: tính cách
+    def _assign_cat(self, p: Player) -> None:
+        """Gán tính cách ổn định theo tên + tung xúc xắc Mèo Vàng đúng 1 lần/phiên."""
+        if not p.personality:
+            p.personality = personality_for_uid(p.unique_id)
+        if p.unique_id not in self._golden_rolled:
+            self._golden_rolled.add(p.unique_id)
+            if self.rng.random() < self.GOLD_CHANCE:
+                p.personality = "gold"
+                p.golden = True
+
+    def _golden_fx(self, p: Player) -> List[dict]:
+        """Xướng Mèo Vàng xuất hiện (1 lần mỗi bé, chỉ ở chế độ vườn)."""
+        if (self.stage_mode != "garden" or not p.golden
+                or p.unique_id in self._golden_announced):
+            return []
+        self._golden_announced.add(p.unique_id)
+        return [{
+            "type": "garden_golden", "player": p.public(),
+            "speak": "✨ Mèo Vàng xuất hiện trong vườn! Ở gần là tim nhân đôi đó cả nhà ơi!",
+            "speak_priority": 1,
+        }]
+
+    def _garden_set_state(self, p: Player, state: str, seconds: float,
+                          now_wall: float) -> None:
+        p.state = state
+        p.state_until = now_wall + seconds
+
+    def _garden_bump(self, p: Player, delta: float) -> None:
+        p.happiness = max(0.0, min(100.0, p.happiness + delta))
+
+    def _garden_react_feed(self, actor: Player) -> List[dict]:
+        """Gõ HẠT/PATE: hội Ham Ăn lao tới bát; mèo đang ngủ trưa bị đánh thức."""
+        now_wall = time.time()
+        for cat in self.players.values():
+            sleeping = cat.eff_state(now_wall) == "sleep"
+            if cat.personality == "foodie" or cat.golden:
+                self._garden_set_state(cat, "eat", 6, now_wall)
+                self._garden_bump(cat, 20)
+            elif cat.personality == "sleepy" and sleeping:
+                self._garden_set_state(cat, "idle", 0, now_wall)
+                self._garden_bump(cat, -8)
+            else:
+                self._garden_set_state(cat, "eat", 4, now_wall)
+                self._garden_bump(cat, 6)
+        return [{"type": "garden_feed", "user": actor.unique_id, "name": actor.nickname}]
+
+    def _garden_react_sleep(self) -> None:
+        """Gõ NGỦ: hội Lười Ngủ chìm vào giấc 20s; hội Tăng Động thì buồn chán."""
+        now_wall = time.time()
+        for cat in self.players.values():
+            if cat.personality == "sleepy":
+                self._garden_set_state(cat, "sleep", 20, now_wall)
+                self._garden_bump(cat, 15)
+            elif cat.personality == "hyper":
+                self._garden_bump(cat, -5)
+
+    def _garden_react_play(self, actor: Player) -> List[dict]:
+        """Gõ CHƠI: hội Tăng Động đuổi bóng; Chảnh phớt lờ; Nhút Nhát giật mình núp."""
+        now_wall = time.time()
+        for cat in self.players.values():
+            if cat.personality == "hyper" or cat.golden:
+                self._garden_set_state(cat, "play", 6, now_wall)
+                self._garden_bump(cat, 20)
+            elif cat.personality == "diva":
+                pass  # Chảnh phớt lờ, không đổi trạng thái lẫn độ vui
+            elif cat.personality == "shy":
+                self._garden_set_state(cat, "hide", 3, now_wall)
+                self._garden_bump(cat, -4)
+            else:
+                self._garden_bump(cat, 4)
+        return [{"type": "garden_play", "user": actor.unique_id, "name": actor.nickname}]
+
+    def _garden_react_praise(self, actor: Player, now_mono: float) -> List[dict]:
+        """Lời khen: Chảnh tạo dáng, Nhút Nhát ló đầu ra. Chặn spam 1 lần / 3s."""
+        if now_mono - self._last_praise_mono < self.PRAISE_THROTTLE:
+            return []
+        self._last_praise_mono = now_mono
+        now_wall = time.time()
+        diva = None
+        for cat in self.players.values():
+            if cat.personality == "diva":
+                diva = cat
+                self._garden_set_state(cat, "pose", 5, now_wall)
+                self._garden_bump(cat, 20)
+            elif cat.personality == "shy":
+                self._garden_set_state(cat, "peek", 3, now_wall)
+                self._garden_bump(cat, 12)
+            else:
+                self._garden_bump(cat, 3)
+        eff: dict = {"type": "garden_praise", "user": actor.unique_id,
+                     "name": actor.nickname}
+        if diva is not None:
+            eff["speak"] = f"{diva.nickname} nghe khen là tạo dáng liền kìa!"
+            eff["speak_priority"] = 5
+        return [eff]
+
+    def _garden_react_fish(self, actor: Player) -> List[dict]:
+        """Gõ CÁ: hội Mê Cá chầu chực kho cá; Ham Ăn cũng hóng theo."""
+        now_wall = time.time()
+        for cat in self.players.values():
+            if cat.personality == "fishy" or cat.golden:
+                self._garden_set_state(cat, "hoard", 6, now_wall)
+                self._garden_bump(cat, 18)
+            elif cat.personality == "foodie":
+                self._garden_bump(cat, 6)
+        return [{"type": "garden_fish", "user": actor.unique_id, "name": actor.nickname}]
+
+    def _garden_scatter(self) -> List[dict]:
+        """Bug bị phá giấc dậy cáu (ở chế độ vườn): cả đàn mèo tản ra né."""
+        now_wall = time.time()
+        for cat in self.players.values():
+            self._garden_set_state(cat, "hide", 3, now_wall)
+            self._garden_bump(cat, -5)
+        return [{"type": "garden_scatter"}]
+
+    def _garden_check_golden_hour(self, now_wall: float) -> List[dict]:
+        """Đủ mốc tim vườn -> Giờ Vàng 30s: cả vườn mở tiệc lớn, mốc sau +1000."""
+        if self.garden_hearts < self.garden_hearts_goal:
+            return []
+        if now_wall < self.garden_golden_hour_until:
+            return []
+        self.garden_golden_hour_until = now_wall + 30
+        self.garden_hearts_goal += 1000
+        for cat in self.players.values():
+            self._garden_set_state(cat, "feast", 30, now_wall)
+        return [{
+            "type": "garden_golden_hour",
+            "speak": "🌇 Giờ Vàng tới rồi! Cả vườn mở tiệc lớn, tim bay ngập trời!",
+            "speak_priority": 1,
+        }]
+
+    def _garden_tick(self, now_wall: float) -> List[dict]:
+        """Nhịp vườn trong tick(): độ vui trôi về 55 + sinh tim mỗi 5s giờ game.
+        Có Mèo Vàng trong vườn thì lượng tim sinh ra nhân đôi."""
+        effects: List[dict] = []
+        if self._garden_last_tick_at is None:
+            dt = 0.0
+        else:
+            dt = max(0.0, min(5.0, now_wall - self._garden_last_tick_at))
+        self._garden_last_tick_at = now_wall
+        if dt > 0:
+            for cat in self.players.values():
+                drift = 55.0 - cat.happiness
+                step = max(-0.6 * dt, min(0.6 * dt, drift))
+                cat.happiness = max(0.0, min(100.0, cat.happiness + step))
+        self._garden_heart_acc += dt
+        while self._garden_heart_acc >= self.HEART_TICK_SECONDS:
+            self._garden_heart_acc -= self.HEART_TICK_SECONDS
+            mult = 2 if any(c.golden for c in self.players.values()) else 1
+            batch = 0
+            for cat in self.players.values():
+                gain = (1 + (1 if cat.happiness >= 75 else 0)) * mult
+                cat.hearts += gain
+                batch += gain
+            self.garden_hearts += batch
+            effects += self._garden_check_golden_hour(now_wall)
+        return effects
 
     def _bug_sleeping(self, now_wall: float) -> bool:
         return self.bug_sleep_until > now_wall
@@ -328,6 +589,9 @@ class GameState:
                 "speak": "Ai phá giấc ngủ của Bug hoài vậy! Bug khó chịu rồi đó!",
                 "speak_priority": 2,
             })
+            if self.stage_mode == "garden":
+                # Bug cáu ở Vườn Mèo: cả đàn mèo tản ra né một lúc
+                effects += self._garden_scatter()
         return effects
 
     def _mood_tick(self, now_wall: float) -> List[dict]:
@@ -360,8 +624,8 @@ class GameState:
     def set_stage_mode(self, mode: str, boss_max_hp: Optional[int] = None,
                        boss_taunts: Optional[bool] = None,
                        boss_skin: Optional[str] = None) -> None:
-        """Đổi chế độ sân khấu (run <-> boss) + áp máu boss / công tắc thoại từ config."""
-        if mode not in ("run", "boss"):
+        """Đổi chế độ sân khấu (run | boss | garden) + áp máu boss / công tắc thoại từ config."""
+        if mode not in ("run", "boss", "garden"):
             return
         if boss_taunts is not None:
             self.boss_taunts = bool(boss_taunts)
@@ -477,6 +741,7 @@ class GameState:
                 p.nickname = nickname
             if avatar_url:
                 p.avatar_url = avatar_url
+            self._assign_cat(p)
             return p, False
         p = Player(
             unique_id=uid,
@@ -487,6 +752,7 @@ class GameState:
         )
         self._next_seat += 1
         self.players[uid] = p
+        self._assign_cat(p)
         return p, True
 
     def leaderboard(self, top: int = 5) -> List[dict]:
@@ -500,6 +766,8 @@ class GameState:
         # Sân khấu chỉ cần tối đa MAX_SEATS mèo, ưu tiên người mới vào + điểm cao:
         # đơn giản & ổn định: giữ thứ tự ghế.
         seated = sorted(self.players.values(), key=lambda p: p.seat)
+        for p in seated:
+            self._assign_cat(p)   # mèo nạp từ điểm lưu cũng phải có tính cách
         now_mono = time.monotonic()
         now_wall_snap = time.time()
         snap = {
@@ -554,6 +822,23 @@ class GameState:
                 "sync_left": round(max(0.0, self.sync_until - now_mono)) if self.boss.alive else 0,
                 "sync_count": len({u for u, _t in self.claw_window}),
             }
+        if self.stage_mode == "garden":
+            now_g = time.time()
+            top_hearts = sorted(self.players.values(),
+                                key=lambda p: (-p.hearts, p.joined_at))[:5]
+            snap["garden"] = {
+                "hearts": self.garden_hearts,
+                "hearts_goal": self.garden_hearts_goal,
+                "feast_active": now_g < self.garden_feast_until,
+                "golden_hour_active": now_g < self.garden_golden_hour_until,
+                "decor_active": now_g < self.garden_decor_until,
+                "golden_present": any(p.golden for p in self.players.values()),
+            }
+            snap["garden_top"] = [{
+                "name": p.nickname,
+                "hearts": p.hearts,
+                "personality_name": personality_info(p.personality)["name"],
+            } for p in top_hearts]
         return snap
 
     # ------------------------------------------------------------- sự kiện
@@ -563,11 +848,13 @@ class GameState:
         if not is_new:
             return []
         p.points += 2
-        return [{
+        effects = [{
             "type": "spawn", "player": p.public(),
             "speak": f"Chào {p.nickname} vừa vào nhà của Bug!",
             "speak_priority": 3,
         }]
+        effects += self._golden_fx(p)
+        return effects
 
     def handle_comment(self, unique_id: str, nickname: str, comment: str,
                        avatar_url: str = "", now: Optional[float] = None) -> List[dict]:
@@ -582,9 +869,24 @@ class GameState:
                 "speak": f"Chào {p.nickname} vừa vào nhà của Bug!",
                 "speak_priority": 3,
             })
+            effects += self._golden_fx(p)
 
         text = normalize(comment)
         tokens = set(text.split())
+
+        # --- Vườn Mèo: cả vườn phản ứng THEO TÍNH CÁCH với bình luận ---
+        # (chỉ ở chế độ garden; các lệnh gốc cho Bug ở dưới vẫn chạy như cũ)
+        if self.stage_mode == "garden":
+            if tokens & {"hat", "pate"} or text in ("an", "cho an", "an di", "bug an", "cho bug an"):
+                effects += self._garden_react_feed(p)
+            if text in SLEEP_TEXTS:
+                self._garden_react_sleep()
+            if text in ("choi", "choi di", "di choi"):
+                effects += self._garden_react_play(p)
+            if text in ("ca", "an ca"):
+                effects += self._garden_react_fish(p)
+            if any(w in text for w in PRAISE_WORDS):
+                effects += self._garden_react_praise(p, now)
 
         # --- Lệnh ĐUA: đăng ký vào sảnh đua ---
         if text == "dua" or text.startswith("dua ") or "tham gia dua" in text:
@@ -812,6 +1114,28 @@ class GameState:
                 if self.boss_taunts and self.boss.alive:
                     effects.append(self._boss_taunt_effect(BOSS_TAUNT_BARRAGE))
             return effects
+        if self.stage_mode == "garden":
+            # Vườn Mèo: mỗi tim thả = +1 tim vườn; đủ mục tiêu tim của phiên
+            # (like_goal) thì mở BỮA TIỆC VƯỜN thay cho mưa cá.
+            self.garden_hearts += count
+            self.likes_since_rain += count
+            effects: List[dict] = [{"type": "likes",
+                                    "likes_since_rain": self.likes_since_rain,
+                                    "like_goal": self.like_goal,
+                                    "total_likes": self.total_likes}]
+            now_wall = time.time()
+            if self.likes_since_rain >= self.like_goal:
+                self.likes_since_rain = 0
+                self.garden_feast_until = now_wall + 20
+                for cat in self.players.values():
+                    self._garden_set_state(cat, "feast", 20, now_wall)
+                effects.append({
+                    "type": "garden_feast",
+                    "speak": "Bữa Tiệc Vườn mở rồi! Cả đàn mèo vào bàn ăn thôi!",
+                    "speak_priority": 1,
+                })
+            effects += self._garden_check_golden_hour(now_wall)
+            return effects
         self.likes_since_rain += count
         effects: List[dict] = [{"type": "likes",
                                 "likes_since_rain": self.likes_since_rain,
@@ -866,6 +1190,22 @@ class GameState:
             effects += die
             if kind == "doan" and self.boss_taunts and self.boss.alive:
                 effects.append(self._boss_taunt_effect(BOSS_TAUNT_SWARM))
+        # Vườn Mèo: quà (khi tự đến) -> mèo của người tặng nhận bát đặc biệt +
+        # vườn được trang trí một lúc. Chỉ là phản ứng cảm ơn, KHÔNG kêu gọi quà.
+        if self.stage_mode == "garden":
+            d = int(diamond_count or 1)
+            now_wall = time.time()
+            self._garden_set_state(p, "feast", 8, now_wall)
+            p.happiness = 100.0
+            p.treat_until = now_wall + 8
+            decor_seconds = 120 if d >= 100 else 60
+            self.garden_decor_until = max(self.garden_decor_until,
+                                          now_wall + decor_seconds)
+            if d >= 100:
+                for cat in self.players.values():
+                    self._garden_bump(cat, 10)
+            effects.append({"type": "garden_treat", "player": p.public(),
+                            "gift_name": gift_name, "diamond_count": d})
         return effects
 
     def handle_follow(self, unique_id: str, nickname: str,
@@ -873,16 +1213,29 @@ class GameState:
         p, _ = self.ensure_player(unique_id, nickname, avatar_url)
         p.points += 10
         self.follows_count += 1
-        return [{"type": "follow", "player": p.public(),
-                 "speak": f"Cảm ơn {p.nickname} đã follow nhà Bug!",
-                 "speak_priority": 2}]
+        effects: List[dict] = [{"type": "follow", "player": p.public(),
+                                "speak": f"Cảm ơn {p.nickname} đã follow nhà Bug!",
+                                "speak_priority": 2}]
+        effects += self._golden_fx(p)
+        if self.stage_mode == "garden":
+            # Vườn Mèo: mèo của người follow chuyển vào vườn ở hẳn phiên này
+            # (+25 tim vườn) — và KHÔNG có màn chó đuổi như chế độ chạy.
+            self.garden_hearts += 25
+            effects += self._garden_check_golden_hour(time.time())
+        return effects
 
     def handle_share(self, unique_id: str, nickname: str,
                      avatar_url: str = "") -> List[dict]:
         p, _ = self.ensure_player(unique_id, nickname, avatar_url)
         p.points += 10
         self.shares_count += 1
-        return [{"type": "share", "player": p.public()}]
+        effects: List[dict] = [{"type": "share", "player": p.public()}]
+        if self.stage_mode == "garden":
+            # Vườn Mèo: chia sẻ live = +10 tim vườn, cả đàn mèo nhảy mừng
+            self.garden_hearts += 10
+            effects.append({"type": "garden_share", "player": p.public()})
+            effects += self._garden_check_golden_hour(time.time())
+        return effects
 
     def run_tick(self, dt: float, now_mono: Optional[float] = None) -> None:
         """Chạy vô tận: mèo trong đội tự chạy liên tục, tích lũy km.
@@ -939,6 +1292,10 @@ class GameState:
 
         # --- Tâm trạng Bug: hạ nhiệt / ngủ đủ giấc tự dậy ---
         effects += self._mood_tick(now_wall)
+
+        # --- Vườn Mèo: độ vui trôi về 55 + sinh tim vườn mỗi 5s ---
+        if self.stage_mode == "garden":
+            effects += self._garden_tick(now_wall)
 
         # --- Đánh Boss: xướng boss xuất hiện 1 lần + hồi sinh sau 15s ---
         if self.stage_mode == "boss":
@@ -1063,9 +1420,13 @@ class GameState:
             p.wins = 0
             p.distance_m = 0.0
             p.in_team = False
+            p.hearts = 0
+            p.happiness = 60.0
         self.damage_by_user = {}
         self.boss_total_damage = 0
         self._rank_announced = {}
+        self.garden_hearts = 0
+        self.garden_hearts_goal = 1000
         self._save_scores()
 
     # ------------------------------------------------------------- lưu điểm

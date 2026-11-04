@@ -24,6 +24,35 @@ body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; overflow: 
 #stage.boss-mode #bossBoard, #stage.boss-mode #bossRankPanel { display: block; }
 #stage.boss-mode #menuBoard, #stage.boss-mode #rankPanel { display: none; }
 
+/* ---------- chế độ Vườn Mèo: hoán đổi panel ---------- */
+#titleGarden { display: none; }
+#stage.garden-mode #titleGarden { display: block; }
+#stage.garden-mode #titleRun, #stage.garden-mode #titleBoss { display: none; }
+#gardenBoard, #gardenTop { display: none; }
+#stage.garden-mode #gardenBoard, #stage.garden-mode #gardenTop { display: block; }
+#stage.garden-mode #menuBoard, #stage.garden-mode #rankPanel,
+#stage.garden-mode #bossBoard, #stage.garden-mode #bossRankPanel,
+#stage.garden-mode #bossHud { display: none; }
+#stage.garden-mode .run-only { display: none; }
+
+/* ---------- bảng lệnh vườn (tông xanh lá – nắng ấm) ---------- */
+#gardenBoard { top: 37.5vh; left: 2.5vw; width: 34%; padding: 0 0 .8vh; overflow: hidden; }
+#gardenBoard h2 {
+  background: linear-gradient(90deg, #2e9e5b, #8bc34a);
+  font-size: 1.8vh; text-align: center; padding: .65vh 6px; letter-spacing: .03em;
+}
+#gardenBoard ul { list-style: none; padding: .6vh 12px 0; font-size: 1.3vh; line-height: 1.52; }
+#gardenBoard b { color: #ffe9a8; }
+
+/* ---------- TOP tim vườn (bên phải, tông hồng tim) ---------- */
+#gardenTop { top: 27vh; right: 2.5vw; width: 30%; }
+#gardenTop h2 { font-size: 1.75vh; color: #ff8fb3; letter-spacing: .04em; }
+#gardenProgress { font-size: 1.45vh; font-weight: 700; color: #ffd88a; margin-top: .4vh; }
+#gardenTopList { list-style: none; margin-top: .6vh; font-size: 1.5vh; line-height: 1.75; }
+#gardenTopList li { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+#gardenTopList .rname { overflow: hidden; text-overflow: ellipsis; }
+#gardenTopList .rkm { color: #ff8fb3; font-weight: 700; }
+
 /* ---------- bảng lệnh boss (kiểu menuBoard, tông tím – vàng kim) ---------- */
 #bossBoard { top: 37.5vh; left: 2.5vw; width: 34%; padding: 0 0 .8vh; overflow: hidden; }
 #bossBoard h2 {

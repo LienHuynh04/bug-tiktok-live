@@ -50,7 +50,8 @@ DEFAULT_CONFIG = {
     "vbee_app_id": "",
     "vbee_token": "",
     "vbee_voice": "sg_female_thaotrinh_48k-fhg",  # Thảo Trinh — nữ miền Nam (mã đã xác thực)
-    # Chế độ sân khấu: "run" = Chạy cùng Bug (mặc định), "boss" = Đánh Boss Chuột Trùm Răng Sắt
+    # Chế độ sân khấu: "run" = Chạy cùng Bug (mặc định), "boss" = Đánh Boss Chuột Trùm Răng Sắt,
+    # "garden" = Vườn Mèo của Bug (mỗi người xem một bé mèo, mỗi bé một tính cách)
     "stage_mode": "run",
     "boss_max_hp": 1000,
     "boss_taunts": True,    # boss chửi lại: thoại châm chọc theo mốc máu / khi bị dội đòn
@@ -566,6 +567,11 @@ DEMO_BOSS_COMMENTS = [
 ]
 # (tên quà, kim cương) cho demo boss — quà to thỉnh thoảng mới có
 DEMO_BOSS_GIFTS = [("Hoa hồng", 1), ("Bánh quy", 5), ("Xe đồ chơi", 30), ("Sư tử", 150)]
+# Bình luận demo riêng cho Vườn Mèo: xoay vòng các lệnh vườn để mèo phản ứng theo tính cách
+DEMO_GARDEN_COMMENTS = [
+    "hạt", "chơi", "xinh quá", "cá", "ngủ", "chơi đi", "hạt",
+    "dễ thương quá", "ăn cá", "chơi", "meow", "cá", "hạt", "buồn ngủ",
+]
 
 
 class DemoSimulator:
@@ -616,6 +622,22 @@ class DemoSimulator:
                         await self._push(self.game.handle_gift(uid, nick, name, diamonds))
                     else:
                         cmt = self.rng.choice(DEMO_BOSS_COMMENTS)
+                        await self._push(self.game.handle_comment(uid, nick, cmt))
+                elif self.game.stage_mode == "garden":
+                    # Demo Vườn Mèo: tim chảy đều (gom tim vườn + đủ 500 mở tiệc),
+                    # follow thỉnh thoảng (mèo mới chuyển vào), còn lại là lệnh vườn
+                    if roll < 0.10:
+                        await self._push(self.game.handle_join(uid, nick))
+                    elif roll < 0.40:
+                        await self._push(self.game.handle_like(self.rng.randint(10, 40)))
+                    elif roll < 0.45:
+                        await self._push(self.game.handle_follow(uid, nick))
+                    elif roll < 0.49:
+                        await self._push(self.game.handle_gift(uid, nick, "Hoa hồng", 1))
+                    elif roll < 0.52:
+                        await self._push(self.game.handle_share(uid, nick))
+                    else:
+                        cmt = self.rng.choice(DEMO_GARDEN_COMMENTS)
                         await self._push(self.game.handle_comment(uid, nick, cmt))
                 elif roll < 0.12:
                     await self._push(self.game.handle_join(uid, nick))
@@ -756,7 +778,7 @@ def build_app() -> web.Application:
             cfg_now["tts_engine"] = "edge"
         if body.get("meow_enabled") is not None:
             cfg_now["meow_enabled"] = bool(body["meow_enabled"])
-        if body.get("stage_mode") in ("run", "boss"):
+        if body.get("stage_mode") in ("run", "boss", "garden"):
             cfg_now["stage_mode"] = body["stage_mode"]
         if body.get("boss_max_hp") is not None:
             try:

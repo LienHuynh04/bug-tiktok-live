@@ -415,6 +415,205 @@ def run():
     assert gm2.bug_sleep_until == 0
     assert gm2.bug_annoyance <= 30.0
 
+    # ================= Vườn Mèo: tính cách + phản ứng theo tính cách =================
+    from game import (PERSONALITY_KEYS, personality_for_uid,  # noqa: E402
+                      OPENING_GARDEN, IDLE_GARDEN)
+
+    def uid_of(personality, tag):
+        i = 0
+        while True:
+            uid = f"{tag}{i}"
+            if personality_for_uid(uid) == personality:
+                return uid
+            i += 1
+
+    gv = GameState(like_goal=10, rng=random.Random(71))
+    gv.GOLD_CHANCE = 0.0   # tắt xúc xắc Mèo Vàng cho các test tính cách thường
+    gv.set_stage_mode("garden")
+    assert gv.snapshot()["stage_mode"] == "garden"
+    assert gv.opening_line() == OPENING_GARDEN
+    assert gv.idle_line() == IDLE_GARDEN
+    assert "garden" in gv.snapshot() and "garden_top" in gv.snapshot()
+
+    uid_foodie = uid_of("foodie", "vf")
+    uid_sleepy = uid_of("sleepy", "vs")
+    uid_hyper = uid_of("hyper", "vh")
+    uid_diva = uid_of("diva", "vd")
+    uid_shy = uid_of("shy", "vy")
+    uid_fishy = uid_of("fishy", "vc")
+    assert set(PERSONALITY_KEYS) == {"foodie", "sleepy", "hyper", "diva", "shy", "fishy"}
+    for uid, nick in [(uid_foodie, "Mèo Ham Ăn"), (uid_sleepy, "Mèo Lười"),
+                      (uid_hyper, "Mèo Tăng Động"), (uid_diva, "Mèo Chảnh"),
+                      (uid_shy, "Mèo Nhút Nhát"), (uid_fishy, "Mèo Mê Cá")]:
+        gv.handle_join(uid, nick)
+    for uid, key in [(uid_foodie, "foodie"), (uid_sleepy, "sleepy"),
+                     (uid_hyper, "hyper"), (uid_diva, "diva"),
+                     (uid_shy, "shy"), (uid_fishy, "fishy")]:
+        assert gv.players[uid].personality == key, (uid, key)
+        assert gv.players[uid].happiness == 60
+    # tính cách ổn định giữa các phiên (cùng tên -> cùng tính cách), run không có block vườn
+    gv2 = GameState(rng=random.Random(1))
+    gv2.GOLD_CHANCE = 0.0
+    gv2.handle_join(uid_foodie, "Mèo Ham Ăn")
+    assert gv2.players[uid_foodie].personality == "foodie"
+    assert "garden" not in gv2.snapshot()
+
+    # --- HẠT: Ham Ăn +20 về bát 6s; mèo khác +6 về bát 4s ---
+    eff = gv.handle_comment(uid_hyper, "Mèo Tăng Động", "hạt", now=100.0)
+    assert any(e["type"] == "garden_feed" for e in eff)
+    assert gv.players[uid_foodie].happiness == 80 and gv.players[uid_foodie].state == "eat"
+    assert gv.players[uid_hyper].happiness == 66 and gv.players[uid_hyper].state == "eat"
+
+    # --- NGỦ: Lười Ngủ ngủ 20s (+15); Tăng Động buồn chán -5 ---
+    gv.players[uid_sleepy].happiness = 60.0
+    gv.players[uid_hyper].happiness = 60.0
+    gv.handle_comment(uid_sleepy, "Mèo Lười", "ngủ", now=110.0)
+    assert gv.players[uid_sleepy].state == "sleep" and gv.players[uid_sleepy].happiness == 75
+    assert gv.players[uid_hyper].happiness == 55
+
+    # --- Cho ăn lúc Lười Ngủ đang ngủ trưa: bị đánh thức, -8 (Bug cũng bị phá giấc) ---
+    eff = gv.handle_comment(uid_foodie, "Mèo Ham Ăn", "hạt", now=120.0)
+    assert any(e["type"] == "bug_disturbed" for e in eff)
+    assert gv.players[uid_sleepy].state == "idle" and gv.players[uid_sleepy].happiness == 67
+
+    # --- CHƠI: Tăng Động +20 đuổi bóng; Nhút Nhát -4 núp; Chảnh phớt lờ ---
+    for uid in (uid_hyper, uid_shy, uid_diva):
+        gv.players[uid].happiness = 60.0
+        gv.players[uid].state = "idle"
+    eff = gv.handle_comment(uid_hyper, "Mèo Tăng Động", "chơi", now=130.0)
+    assert any(e["type"] == "garden_play" for e in eff)
+    assert gv.players[uid_hyper].happiness == 80 and gv.players[uid_hyper].state == "play"
+    assert gv.players[uid_shy].happiness == 56 and gv.players[uid_shy].state == "hide"
+    assert gv.players[uid_diva].happiness == 60 and gv.players[uid_diva].state == "idle"
+
+    # --- Khen: Chảnh tạo dáng +20; Nhút Nhát ló đầu +12; chặn spam 1 lần / 3s ---
+    gv.players[uid_diva].happiness = 60.0
+    gv.players[uid_shy].happiness = 60.0
+    gv.players[uid_shy].state = "idle"
+    eff = gv.handle_comment(uid_foodie, "Mèo Ham Ăn", "xinh quá", now=200.0)
+    assert any(e["type"] == "garden_praise" for e in eff)
+    assert gv.players[uid_diva].happiness == 80 and gv.players[uid_diva].state == "pose"
+    assert gv.players[uid_shy].happiness == 72 and gv.players[uid_shy].state == "peek"
+    gv.players[uid_diva].happiness = 60.0
+    eff = gv.handle_comment(uid_foodie, "Mèo Ham Ăn", "dễ thương quá", now=201.0)
+    assert not any(e["type"] == "garden_praise" for e in eff)
+    assert gv.players[uid_diva].happiness == 60
+    eff = gv.handle_comment(uid_foodie, "Mèo Ham Ăn", "cute quá", now=204.0)
+    assert any(e["type"] == "garden_praise" for e in eff)
+
+    # --- CÁ: Mê Cá chầu kho cá +18; Ham Ăn hóng +6 ---
+    gv.players[uid_fishy].happiness = 60.0
+    gv.players[uid_foodie].happiness = 60.0
+    eff = gv.handle_comment(uid_fishy, "Mèo Mê Cá", "cá", now=210.0)
+    assert any(e["type"] == "garden_fish" for e in eff)
+    assert gv.players[uid_fishy].happiness == 78 and gv.players[uid_fishy].state == "hoard"
+    assert gv.players[uid_foodie].happiness == 66
+
+    # --- Mèo Vàng: ép xúc xắc 100% -> hiện hình + xướng tên; sinh tim nhân đôi ---
+    gg2 = GameState(like_goal=500, rng=random.Random(73))
+    gg2.GOLD_CHANCE = 1.0
+    gg2.set_stage_mode("garden")
+    eff = gg2.handle_join("gold1", "Mèo Vàng Một")
+    assert any(e["type"] == "garden_golden" for e in eff)
+    assert gg2.players["gold1"].golden and gg2.players["gold1"].personality == "gold"
+    snap = gg2.snapshot()
+    assert snap["garden"]["golden_present"] is True
+    gn2 = GameState(like_goal=500, rng=random.Random(79))
+    gn2.GOLD_CHANCE = 0.0
+    gn2.set_stage_mode("garden")
+    gn2.handle_join("norm1", "Mèo Thường")
+    t0 = time.time()
+    for g_ in (gg2, gn2):
+        g_.tick(now_wall=t0)          # tick đầu: chốt mốc dt
+        g_.tick(now_wall=t0 + 5.5)    # +5s giờ game -> sinh đúng 1 đợt tim
+    assert gn2.garden_hearts == 1 and gn2.players["norm1"].hearts == 1
+    assert gg2.garden_hearts == 2 and gg2.players["gold1"].hearts == 2   # có vàng: x2
+
+    # --- Đủ like_goal ở vườn: Bữa Tiệc Vườn thay mưa cá + snapshot vườn đầy đủ ---
+    gf = GameState(like_goal=10, rng=random.Random(83))
+    gf.GOLD_CHANCE = 0.0
+    gf.set_stage_mode("garden")
+    gf.handle_join("f1", "Mèo Tiệc")
+    eff = gf.handle_like(10)
+    assert any(e["type"] == "garden_feast" for e in eff)
+    assert not any(e["type"] == "rain" for e in eff)
+    assert gf.likes_since_rain == 0 and gf.garden_hearts == 10
+    snap = gf.snapshot()
+    assert snap["garden"]["feast_active"] is True
+    assert {"hearts", "hearts_goal", "feast_active", "golden_hour_active",
+            "decor_active", "golden_present"} <= set(snap["garden"].keys())
+    assert snap["garden_top"][0]["name"] == "Mèo Tiệc"
+    assert snap["garden_top"][0]["personality_name"]
+    p0 = snap["players"][0]
+    assert {"personality", "personality_name", "icon", "happiness", "mood_face",
+            "state", "golden", "hearts"} <= set(p0.keys())
+
+    # --- Đủ mốc tim vườn -> Giờ Vàng; mốc sau +1000; tim không bị reset ---
+    gh = GameState(like_goal=500, rng=random.Random(89))
+    gh.GOLD_CHANCE = 0.0
+    gh.set_stage_mode("garden")
+    gh.handle_join("h1", "Mèo Giờ Vàng")
+    gh.garden_hearts = 999
+    eff = gh.handle_like(1)
+    assert any(e["type"] == "garden_golden_hour" for e in eff)
+    assert gh.garden_hearts == 1000 and gh.garden_hearts_goal == 2000
+    assert gh.snapshot()["garden"]["golden_hour_active"] is True
+    assert gh.players["h1"].state == "feast"
+
+    # --- Follow ở vườn: +25 tim vườn; Share: +10 tim + garden_share. Chạy: không có ---
+    gfs = GameState(like_goal=500, rng=random.Random(97))
+    gfs.GOLD_CHANCE = 0.0
+    gfs.set_stage_mode("garden")
+    eff = gfs.handle_follow("fw1", "Mèo Follow")
+    assert any(e["type"] == "follow" for e in eff)
+    assert gfs.garden_hearts == 25
+    eff = gfs.handle_share("fw1", "Mèo Follow")
+    assert any(e["type"] == "garden_share" for e in eff)
+    assert gfs.garden_hearts == 35
+    grr = GameState(like_goal=500, rng=random.Random(97))
+    grr.GOLD_CHANCE = 0.0
+    grr.handle_follow("fw1", "Mèo Follow")
+    eff = grr.handle_share("fw1", "Mèo Follow")
+    assert grr.garden_hearts == 0
+    assert not any(e["type"] == "garden_share" for e in eff)
+
+    # --- Quà ở vườn: người tặng mở tiệc 8s + vui 100 + bát đặc biệt; vườn trang trí ---
+    ggt = GameState(like_goal=500, rng=random.Random(101))
+    ggt.GOLD_CHANCE = 0.0
+    ggt.set_stage_mode("garden")
+    ggt.handle_join("gt1", "Mèo Quà")
+    ggt.handle_join("gt2", "Mèo Bạn")
+    ggt.handle_gift("gt1", "Mèo Quà", "Hoa hồng", 1)
+    p_gt = ggt.players["gt1"]
+    assert p_gt.happiness == 100 and p_gt.state == "feast"
+    assert p_gt.public()["treat"] is True
+    assert ggt.snapshot()["garden"]["decor_active"] is True
+    assert 0 < ggt.garden_decor_until - time.time() <= 61
+    ggt.players["gt2"].happiness = 50.0
+    ggt.players["gt1"].happiness = 40.0
+    ggt.handle_gift("gt2", "Mèo Bạn", "Sư tử", 150)   # quà to: cả vườn +10, trang trí 120s
+    assert ggt.players["gt1"].happiness == 50
+    assert ggt.garden_decor_until - time.time() > 100
+
+    # --- Bug bị phá giấc dậy cáu ở vườn: cả đàn tản ra né (garden_scatter) ---
+    gsc = GameState(like_goal=500, rng=random.Random(103))
+    gsc.GOLD_CHANCE = 0.0
+    gsc.set_stage_mode("garden")
+    gsc.handle_join("sc1", "Mèo Phá")
+    gsc.handle_join("sc2", "Mèo Né")
+    gsc.handle_comment("sc1", "Mèo Phá", "ngủ", now=100.0)
+    assert gsc.bug_sleep_until > time.time()
+    eff = gsc.handle_comment("sc1", "Mèo Phá", "hạt", now=101.0)
+    assert any(e["type"] == "bug_disturbed" for e in eff)
+    eff = gsc.handle_comment("sc1", "Mèo Phá", "đi ngủ", now=102.0)
+    assert any(e["type"] == "bug_disturbed" for e in eff)
+    hap_before = gsc.players["sc2"].happiness
+    eff = gsc.handle_gift("sc1", "Mèo Phá", "Hoa hồng", 1)
+    assert any(e["type"] == "bug_wake_annoyed" for e in eff)
+    assert any(e["type"] == "garden_scatter" for e in eff)
+    assert gsc.players["sc2"].state == "hide"
+    assert gsc.players["sc2"].happiness == hap_before - 5
+
     print("✅ Tất cả test game đều PASS")
 
 

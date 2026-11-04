@@ -13,6 +13,7 @@
   <header id="titleBar">
     <p id="titleRun">💬 Bình luận để vào đội • Mỗi người là một bé mèo • ❤️ Đủ <span id="likeGoalText">500</span> tim → mưa cá</p>
     <p id="titleBoss">🐭 ĐÁNH BOSS • Gõ CÀO để tấn công • ❤️ Thả tim nạp Nộ → mưa cá trút xuống boss</p>
+    <p id="titleGarden">🌿 VƯỜN MÈO • Mỗi mèo một tính cách • Gõ lệnh là mèo phản ứng theo tính cách</p>
   </header>
 
   <aside id="statsPanel" class="panel">
@@ -69,6 +70,19 @@
     </ul>
   </section>
 
+  <section id="gardenBoard" class="panel">
+    <h2>🌿 VƯỜN MÈO CỦA BUG</h2>
+    <ul>
+      <li>🍚 <b>"hạt"</b>: gọi mèo ăn</li>
+      <li>🌙 <b>"ngủ"</b>: hội Lười ngủ</li>
+      <li>🧶 <b>"chơi"</b>: hội Tăng Động đuổi bóng</li>
+      <li>💬 khen <b>"xinh quá"</b>: Chảnh tạo dáng</li>
+      <li>🐟 <b>"cá"</b>: hội Mê Cá chầu kho cá</li>
+      <li>❤️ thả tim: gom tim vườn — đủ 500 mở Bữa Tiệc</li>
+      <li>👑 Mèo Vàng hiếm: tim ×2</li>
+    </ul>
+  </section>
+
   <div id="bossHud">
     <div id="bossChip">🐭 <span id="bossName">CHUỘT TRÙM RĂNG SẮT</span> — Vòng <span id="bossRound">1</span></div>
     <div class="boss-hp-bar"><div id="bossHpFill"></div><span id="bossHpText">1000 / 1000</span></div>
@@ -90,6 +104,12 @@
   <aside id="bossRankPanel" class="panel">
     <h2>⚔️ TOP MÈO GÓP SỨC</h2>
     <ol id="bossRankList"></ol>
+  </aside>
+
+  <aside id="gardenTop" class="panel">
+    <h2>❤️ TOP TIM VƯỜN</h2>
+    <div id="gardenProgress">❤️ 0 / 1000</div>
+    <ol id="gardenTopList"></ol>
   </aside>
 
   <div id="bossBanner" class="hidden">

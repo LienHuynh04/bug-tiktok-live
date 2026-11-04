@@ -195,6 +195,7 @@ $("meowTest").onclick = () => {
 function setModeUI(mode) {
   $("modeRun").classList.toggle("primary", mode === "run");
   $("modeBoss").classList.toggle("primary", mode === "boss");
+  $("modeGarden").classList.toggle("primary", mode === "garden");
 }
 $("modeRun").onclick = async () => {
   await post("/api/config", { stage_mode: "run" });
@@ -205,6 +206,11 @@ $("modeBoss").onclick = async () => {
   await post("/api/config", { stage_mode: "boss", boss_max_hp: Number($("bossMaxHp").value) || 1000 });
   setModeUI("boss");
   log("Chế độ sân khấu: 🐭 Đánh Boss Chuột Trùm Răng Sắt");
+};
+$("modeGarden").onclick = async () => {
+  await post("/api/config", { stage_mode: "garden" });
+  setModeUI("garden");
+  log("Chế độ sân khấu: 🌿 Vườn Mèo của Bug");
 };
 $("bossMaxHp").onchange = async () => {
   await post("/api/config", { boss_max_hp: Number($("bossMaxHp").value) || 1000 });
@@ -263,4 +269,7 @@ ws.onmessage = (ev) => {
   else if (msg.type === "rain") log("🌧️🐟 Mưa cá!");
   else if (msg.type === "boss_down") log("🐭🎉 Boss gục vòng " + msg.round + " — đòn cuối: " + (msg.final_blow ? msg.final_blow.name : ""));
   else if (msg.type === "boss_respawn") log("🐭 Boss hồi sinh vòng " + msg.round + (msg.skin_name ? " — hiện hình " + msg.skin_name : "") + " (máu " + msg.max_hp + ")");
+  else if (msg.type === "garden_feast") log("🌿🎉 Bữa Tiệc Vườn mở — cả đàn mèo vào bàn ăn!");
+  else if (msg.type === "garden_golden_hour") log("🌇 Giờ Vàng tới — cả vườn mở tiệc lớn!");
+  else if (msg.type === "garden_golden") log("✨ Mèo Vàng xuất hiện trong vườn — tim nhân đôi!");
 };
