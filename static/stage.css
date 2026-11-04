@@ -100,6 +100,53 @@ body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; overflow: 
 #minerBannerTitle { font-size: 3.2vh; font-weight: 900; color: #ffd34d; letter-spacing: .02em; }
 #minerBannerSub { font-size: 1.8vh; font-weight: 700; margin-top: .6vh; line-height: 1.55; }
 
+/* ---------- chế độ Kéo Co: hoán đổi panel ---------- */
+#titleTug { display: none; }
+#stage.tug-mode #titleTug { display: block; }
+#stage.tug-mode #titleRun, #stage.tug-mode #titleBoss,
+#stage.tug-mode #titleGarden, #stage.tug-mode #titleMiner { display: none; }
+#tugBoard, #tugTop { display: none; }
+#stage.tug-mode #tugBoard, #stage.tug-mode #tugTop { display: block; }
+#stage.tug-mode #menuBoard, #stage.tug-mode #rankPanel,
+#stage.tug-mode #bossBoard, #stage.tug-mode #bossRankPanel,
+#stage.tug-mode #gardenBoard, #stage.tug-mode #gardenTop,
+#stage.tug-mode #minerBoard, #stage.tug-mode #minerTop,
+#stage.tug-mode #bossHud { display: none; }
+#stage.tug-mode .run-only { display: none; }
+
+/* ---------- bảng lệnh kéo co (tông đỏ hội làng – cam đất) ----------
+   Nằm DƯỚI sân kéo (sân chiếm dải ngang giữa màn hình) như bố cục lễ hội */
+#tugBoard { top: 66.8vh; left: 2.5vw; width: 34%; padding: 0 0 .7vh; overflow: hidden; }
+#tugBoard h2 {
+  background: linear-gradient(90deg, #b03a2e, #e67e22);
+  font-size: 1.7vh; text-align: center; padding: .5vh 6px; letter-spacing: .03em;
+}
+#tugBoard ul { list-style: none; padding: .5vh 12px 0; font-size: 1.24vh; line-height: 1.42; }
+#tugBoard b { color: #ffd88a; }
+.tug-status { padding: .3vh 12px 0; font-size: 1.24vh; font-weight: 700; line-height: 1.32; }
+#tugStatusCam { color: #ffb066; }
+#tugStatusXam { color: #cfd8e3; }
+
+/* ---------- TOP lực sĩ (dưới sân, bên phải) ---------- */
+#tugTop { top: 67.5vh; right: 2.5vw; width: 30%; }
+#tugTop h2 { font-size: 1.75vh; color: #ff9f43; letter-spacing: .04em; }
+#tugTopList { list-style: none; margin-top: .6vh; font-size: 1.5vh; line-height: 1.75; }
+#tugTopList li { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+#tugTopList .rname { overflow: hidden; text-overflow: ellipsis; }
+#tugTopList .rkm { color: #ffd88a; font-weight: 700; }
+
+/* ---------- banner hết hiệp kéo co ---------- */
+#tugBanner {
+  position: absolute; top: 30vh; left: 50%; transform: translateX(-50%);
+  width: 86%; z-index: 30; text-align: center; pointer-events: none;
+  background: rgba(43, 16, 8, .93); color: #fff;
+  border: 3px solid #ff9f43; border-radius: 20px; padding: 1.6vh 18px;
+  box-shadow: 0 10px 40px rgba(30, 10, 0, .6);
+}
+#tugBanner.hidden { display: none; }
+#tugBannerTitle { font-size: 3.2vh; font-weight: 900; color: #ff9f43; letter-spacing: .02em; }
+#tugBannerSub { font-size: 1.8vh; font-weight: 700; margin-top: .6vh; line-height: 1.55; }
+
 /* sự kiện nổi bật trong nhật ký (giật vàng to, móc vàng...) */
 #eventLog li.hl { color: #ffd34d; font-weight: 800; }
 

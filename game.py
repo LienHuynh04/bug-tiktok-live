@@ -109,6 +109,14 @@ class Player:
     gold_round: int = 0             # vàng đào được trong hiệp hiện tại
     gold_total: int = 0             # vàng cộng dồn cả phiên (đua Vua Đào Vàng)
     last_dao_at: float = 0.0        # cooldown lệnh ĐÀO (monotonic)
+    # --- Kéo Co (trường riêng, KHÔNG dùng chung `team` của Đào Vàng) ---
+    tug_team: Optional[str] = None  # "cam" | "xam" | None (chưa vào đội)
+    tug_pulls: int = 0              # tổng số cú kéo cả phiên
+    tug_force: float = 0.0          # tổng lực kéo cả phiên (đua Lực Sĩ)
+    tug_force_round: float = 0.0    # lực kéo trong hiệp hiện tại (chọn MVP)
+    stamina: float = 100.0          # thể lực kéo co: 0..100, kéo tốn sức
+    last_tug_at: float = 0.0        # cooldown lệnh KÉO (monotonic)
+    last_cheer_at: float = 0.0      # cooldown lệnh HÒ (monotonic)
 
     def eff_speed_mode(self, now_mono: float) -> str:
         if self.speed_mode != "normal" and now_mono >= self.speed_until:
@@ -153,6 +161,12 @@ class Player:
             # --- Đào Vàng PK ---
             "team": self.team,
             "gold_total": self.gold_total,
+            # --- Kéo Co ---
+            "tug_team": self.tug_team,
+            "tug_pulls": self.tug_pulls,
+            "tug_force": round(self.tug_force, 1),
+            "stamina": round(self.stamina),
+            "tired": self.stamina < TUG_TIRED_UNDER,
         }
 
 
@@ -299,6 +313,13 @@ OPENING_MINER = ("Chào mừng cả nhà đến với MỎ VÀNG CỦA BUG! Hai 
 IDLE_MINER = ("Cả nhà ơi, mỏ vàng đang nóng! Gõ MÈO hoặc CHUỘT để vào đội, canh lúc móc quét "
               "qua cục vàng to thì gõ ĐÀO để giật về cho đội mình nha! Thả tim cho đầy thanh "
               "thuốc nổ là NỔ MÌN lộ vàng đó!")
+OPENING_TUG = ("Chào cả nhà đến với HỘI KÉO CO của làng Bug! Gõ CAM vào đội Mèo Cam, "
+               "gõ XÁM vào đội Mèo Xám — gõ KÉO là kéo dây, gõ HÒ là hò lấy sức! "
+               "Đội nào kéo được cờ qua vạch của mình là thắng hiệp!")
+IDLE_TUG = ("Cả nhà ơi, hội kéo co làng Bug đang sôi! Gõ CAM hoặc XÁM để vào đội, "
+            "gõ KÉO kéo dây, gõ HÒ DÔ lấy khí thế cho đội mình nha! Kéo phải giữ sức — "
+            "mèo đuối sức là kéo yếu hẳn đó. Thả tim đủ mốc là trống hội nổi lên, "
+            "cả hai đội kéo mạnh hẳn!")
 
 # --- Đào Vàng PK: 2 đội móc vàng thi đấu theo hiệp ---------------------------
 # Trường mỏ dùng toạ độ chuẩn hoá 0..1 (x theo chiều ngang sân khấu, y từ trên
@@ -326,6 +347,33 @@ MINER_SWING_DEG = 68.0         # biên độ quét của móc (độ)
 MINER_SWING_PERIOD = 2.6       # chu kỳ quét qua lại (giây)
 MINER_DAO_COOLDOWN = 1.5       # giây, chống spam ĐÀO theo monotonic
 MINER_BAG_TARGET_VALUE = 50    # giá trị danh định của túi khi chọn mục tiêu móc vàng (quà to)
+
+# --- Kéo Co: 2 đội mèo kéo dây theo hiệp -----------------------------------
+# Vị trí cờ giữa dây: -100 (đầu sân Đội Cam) .. +100 (đầu sân Đội Xám);
+# Cam kéo về phía âm, Xám kéo về phía dương. Vật lý xung lực + giảm chấn:
+# một cú kéo chuẩn (lực 10) làm vel nhảy 10*K = 5.0, quãng dây chạy thêm
+# trước khi tắt dần ~= vel/hệ số giảm chấn = 5.0/2.2 ~= 2.3 đơn vị.
+TUG_TEAM_NAMES = {"cam": "Cam", "xam": "Xám"}
+TUG_DIRS = {"cam": -1.0, "xam": 1.0}
+TUG_ROUND_SECONDS = 90         # 1 hiệp kéo
+TUG_PODIUM_SECONDS = 10        # nghỉ công bố kết quả giữa 2 hiệp
+TUG_WIN_POS = 85.0             # |pos| >= 85 -> đoạt cờ, thắng hiệp ngay
+TUG_PULL_COOLDOWN = 1.2        # giây, chống spam KÉO theo monotonic
+TUG_CHEER_COOLDOWN = 3.0       # giây, chống spam HÒ theo monotonic
+TUG_BASE_FORCE = 10.0          # lực gốc của 1 cú kéo
+TUG_IMPULSE_K = 0.5            # hệ số xung lực: vel += hướng * lực * K
+TUG_DAMPING = 2.2              # vel *= exp(-TUG_DAMPING * dt) mỗi tick
+TUG_PULL_COST = 12.0           # thể lực trừ mỗi cú kéo
+TUG_STAMINA_REGEN = 4.0        # thể lực hồi mỗi giây trong tick
+TUG_TIRED_UNDER = 30.0         # thể lực dưới mốc này -> kéo yếu (hệ số 0.55)
+TUG_TIRED_FACTOR = 0.55
+TUG_CHEER_MORALE = 18.0        # khí thế cộng mỗi lần HÒ
+TUG_MORALE_DECAY = 6.0         # khí thế hao mỗi giây trong tick
+TUG_COMEBACK_POS = 70.0        # dây bị kéo lệch >= 70 chống lại đội mình
+TUG_COMEBACK_FACTOR = 1.25     # -> hệ số lội ngược dòng
+TUG_DRUMS_SECONDS = 15         # trống hội: cả 2 đội x1.5 trong 15s
+TUG_DRUMS_MULT = 1.5
+TUG_SUPER_YANK = 12.0          # giật siêu cấp (quà >= 100 kim cương): dây nhảy 12
 
 # --- Thoại tâm trạng của Bug (xoay vòng cho đỡ lặp) ---
 OVERFEED_LINES = [
@@ -386,8 +434,8 @@ class GameState:
         self.scores_path = scores_path
         self.rng = rng or random.Random()
         self._next_seat = 0
-        # --- chế độ sân khấu: run | boss | garden | miner ---
-        self.stage_mode = stage_mode if stage_mode in ("run", "boss", "garden", "miner") else "run"
+        # --- chế độ sân khấu: run | boss | garden | miner | tug ---
+        self.stage_mode = stage_mode if stage_mode in ("run", "boss", "garden", "miner", "tug") else "run"
         # --- Vườn Mèo ---
         self.garden_hearts = 0             # tim vườn đã gom trong phiên
         self.garden_hearts_goal = 1000     # đủ mốc này -> Giờ Vàng (rồi mốc +1000)
@@ -418,6 +466,23 @@ class GameState:
         self._miner_reach: Dict[str, float] = {}  # uid -> mốc wall-clock đạt mốc vàng hiệp hiện tại
         self._miner_last_grab_speak_at = -100.0  # throttle đọc tin giật vàng to
         self._miner_last_join_speak = -100.0     # throttle đọc tin vào đội (monotonic)
+        # --- Kéo Co: trạng thái dây; mốc hiệp hẹn LƯỜI (lazy) như mỏ để các
+        # chế độ khác không bị ảnh hưởng lúc khởi tạo ---
+        self._tug_ready = False
+        self.tug_pos = 0.0                       # vị trí cờ: -100..+100
+        self.tug_vel = 0.0                       # vận tốc dây (đơn vị/giây)
+        self.tug_round = 1
+        self.tug_phase = "play"                  # play | podium
+        self.tug_deadline = 0.0                  # mốc wall-clock hết pha hiện tại
+        self.tug_wins: Dict[str, int] = {"cam": 0, "xam": 0}      # số hiệp thắng
+        self.tug_morale: Dict[str, float] = {"cam": 0.0, "xam": 0.0}  # khí thế 0..100
+        self.tug_buffs: Dict[str, dict] = {
+            t: {"mult": 1.0, "until": 0.0} for t in TUG_TEAM_NAMES}
+        self.tug_drums_until = 0.0               # mốc wall-clock hết trống hội
+        self._tug_last_tick_at: Optional[float] = None
+        self._tug_last_pull_wall = 0.0           # mốc wall-clock cú kéo gần nhất
+        self._tug_reach: Dict[str, float] = {}   # uid -> mốc đạt lực hiệp (chọn MVP)
+        self._tug_last_join_speak = -100.0       # throttle đọc tin vào đội (monotonic)
         self.boss = Boss(boss_max_hp)
         self.damage_by_user: Dict[str, int] = {}   # sát thương cộng dồn trong phiên
         self.boss_total_damage = 0                 # gồm cả sát thương mưa cá (cả đội)
@@ -440,6 +505,8 @@ class GameState:
         self._load_scores()
         if self.stage_mode == "miner":
             self._miner_ensure()
+        if self.stage_mode == "tug":
+            self._tug_ensure()
 
     # ------------------------------------------------------------- chế độ boss
     def set_boss_skin(self, pref: Optional[str]) -> None:
@@ -462,6 +529,8 @@ class GameState:
             return OPENING_GARDEN
         if self.stage_mode == "miner":
             return OPENING_MINER
+        if self.stage_mode == "tug":
+            return OPENING_TUG
         return OPENING_RUN
 
     def idle_line(self) -> str:
@@ -472,6 +541,8 @@ class GameState:
             return IDLE_GARDEN
         if self.stage_mode == "miner":
             return IDLE_MINER
+        if self.stage_mode == "tug":
+            return IDLE_TUG
         return IDLE_RUN
 
     # ------------------------------------------------------- Đào Vàng PK
@@ -746,6 +817,202 @@ class GameState:
                     effects += self._miner_credit(team, hook, now_wall)
         return effects
 
+    # ------------------------------------------------------- Kéo Co
+    def _tug_ensure(self) -> None:
+        """Hẹn giờ hiệp đầu lần đầu vào chế độ kéo co (lazy, xem __init__)."""
+        if self._tug_ready:
+            return
+        self._tug_ready = True
+        self.tug_deadline = time.time() + TUG_ROUND_SECONDS
+
+    def _tug_team_size(self, team: str) -> int:
+        return sum(1 for p in self.players.values() if p.tug_team == team)
+
+    def _tug_smaller_team(self) -> str:
+        return "cam" if self._tug_team_size("cam") <= self._tug_team_size("xam") else "xam"
+
+    def _tug_buff_mult(self, team: str, now_wall: float) -> float:
+        buff = self.tug_buffs.get(team) or {}
+        if now_wall < float(buff.get("until", 0.0)):
+            return float(buff.get("mult", 1.0))
+        return 1.0
+
+    def _tug_set_buff(self, team: str, mult: float, seconds: float,
+                      now_wall: float) -> dict:
+        """Mỗi đội chỉ 1 ô buff: làm mới thì giữ hệ số cao hơn + hạn xa hơn."""
+        cur = self.tug_buffs.get(team) or {"mult": 1.0, "until": 0.0}
+        if (now_wall < float(cur.get("until", 0.0))
+                and float(cur.get("mult", 1.0)) >= mult):
+            cur = {"mult": float(cur["mult"]),
+                   "until": max(float(cur["until"]), now_wall + seconds)}
+        else:
+            cur = {"mult": float(mult), "until": now_wall + seconds}
+        self.tug_buffs[team] = cur
+        return cur
+
+    def _tug_join_team(self, p: Player, team: str, now: float) -> List[dict]:
+        """Vào / đổi đội kéo co: thành tích cá nhân giữ nguyên."""
+        self._tug_ensure()
+        if p.tug_team == team:
+            return []
+        p.tug_team = team
+        eff: dict = {"type": "tug_join", "user": p.unique_id,
+                     "name": p.nickname, "team": team, "player": p.public(now)}
+        if now - self._tug_last_join_speak >= 3.0:
+            self._tug_last_join_speak = now
+            eff["speak"] = (f"{p.nickname} vào Đội Mèo {TUG_TEAM_NAMES[team]}! "
+                            "Gõ KÉO là kéo dây, gõ HÒ là hò lấy sức nha!")
+            eff["speak_priority"] = 4
+        return [eff]
+
+    def _tug_try_pull(self, p: Player, now: float) -> List[dict]:
+        """Gõ KÉO: chưa có đội thì tự vào đội ít người hơn trước; cú kéo tạo
+        xung lực lên dây — lực tính theo thể lực (đuối sức kéo yếu), khí thế
+        đội, buff quà/trống hội (lấy hệ số cao hơn) và thế trận lội ngược dòng
+        khi dây đang bị kéo lệch sâu chống lại đội mình."""
+        self._tug_ensure()
+        effects: List[dict] = []
+        if p.tug_team is None:
+            effects += self._tug_join_team(p, self._tug_smaller_team(), now)
+        if self.tug_phase != "play":
+            return effects
+        if now - p.last_tug_at < TUG_PULL_COOLDOWN:
+            return effects
+        p.last_tug_at = now
+        team = p.tug_team
+        now_wall = time.time()
+        stamina_factor = 1.0 if p.stamina >= TUG_TIRED_UNDER else TUG_TIRED_FACTOR
+        morale_factor = 1.0 + self.tug_morale[team] / 200.0
+        buff_factor = max(self._tug_buff_mult(team, now_wall),
+                          TUG_DRUMS_MULT if now_wall < self.tug_drums_until else 1.0)
+        against = ((team == "cam" and self.tug_pos >= TUG_COMEBACK_POS)
+                   or (team == "xam" and self.tug_pos <= -TUG_COMEBACK_POS))
+        comeback_factor = TUG_COMEBACK_FACTOR if against else 1.0
+        force = (TUG_BASE_FORCE * stamina_factor * morale_factor
+                 * buff_factor * comeback_factor)
+        self.tug_vel += TUG_DIRS[team] * force * TUG_IMPULSE_K
+        p.stamina = max(0.0, p.stamina - TUG_PULL_COST)
+        p.tug_pulls += 1
+        p.tug_force += force
+        p.tug_force_round += force
+        self._tug_reach[p.unique_id] = now_wall
+        self._tug_last_pull_wall = now_wall
+        effects.append({"type": "tug_pull", "user": p.unique_id,
+                        "name": p.nickname, "team": team,
+                        "force": round(force, 1)})
+        return effects
+
+    def _tug_try_cheer(self, p: Player, now: float) -> List[dict]:
+        """Gõ HÒ / HÒ DÔ: nạp khí thế cho đội mình (lực kéo + tối đa 50%)."""
+        self._tug_ensure()
+        effects: List[dict] = []
+        if p.tug_team is None:
+            effects += self._tug_join_team(p, self._tug_smaller_team(), now)
+        if now - p.last_cheer_at < TUG_CHEER_COOLDOWN:
+            return effects
+        p.last_cheer_at = now
+        team = p.tug_team
+        self.tug_morale[team] = min(100.0, self.tug_morale[team] + TUG_CHEER_MORALE)
+        effects.append({"type": "tug_cheer", "user": p.unique_id,
+                        "name": p.nickname, "team": team,
+                        "morale": round(self.tug_morale[team])})
+        return effects
+
+    def _tug_end_round(self, now_wall: float) -> List[dict]:
+        """Chốt hiệp: thắng theo phía dây lệch (đoạt cờ |pos|>=85 hoặc hết giờ
+        đội đang dẫn thắng; dây đứng giữa -> hoà). MVP = lực hiệp cao nhất,
+        hoà lực thì ai chạm mốc trước thắng."""
+        if self.tug_pos < 0:
+            winner: Optional[str] = "cam"
+        elif self.tug_pos > 0:
+            winner = "xam"
+        else:
+            winner = None
+        if winner:
+            self.tug_wins[winner] += 1
+        mvp: Optional[Player] = None
+        for p in self.players.values():
+            if p.tug_force_round <= 0:
+                continue
+            if (mvp is None or p.tug_force_round > mvp.tug_force_round
+                    or (p.tug_force_round == mvp.tug_force_round
+                        and self._tug_reach.get(p.unique_id, 0.0)
+                        < self._tug_reach.get(mvp.unique_id, 0.0))):
+                mvp = p
+        round_no = self.tug_round
+        if winner:
+            speak = (f"Đoạt cờ! Đội Mèo {TUG_TEAM_NAMES[winner]} "
+                     f"thắng hiệp {round_no}!")
+            if mvp is not None:
+                speak += f" Lực sĩ của hiệp: {mvp.nickname}!"
+        else:
+            speak = f"Hiệp {round_no} hoà — hai đội ngang tài ngang sức!"
+        eff = {"type": "tug_round_end", "round": round_no,
+               "winner": winner if winner else "draw",
+               "pos": round(self.tug_pos, 1),
+               "mvp": mvp.unique_id if mvp else None,
+               "mvp_name": mvp.nickname if mvp else "",
+               "mvp_force": int(round(mvp.tug_force_round)) if mvp else 0,
+               "wins": dict(self.tug_wins),
+               "speak": speak, "speak_priority": 1}
+        # Reset cho hiệp sau: dây về giữa, vận tốc xoá, khí thế giữ một nửa
+        self.tug_pos = 0.0
+        self.tug_vel = 0.0
+        for t in TUG_TEAM_NAMES:
+            self.tug_morale[t] *= 0.5
+        for p in self.players.values():
+            p.tug_force_round = 0.0
+        self._tug_reach = {}
+        self.tug_phase = "podium"
+        self.tug_deadline = now_wall + TUG_PODIUM_SECONDS
+        return [eff]
+
+    def _tug_tick(self, now_wall: float) -> List[dict]:
+        """Nhịp kéo co trong tick(): chuyển pha hiệp, hao khí thế, hồi thể
+        lực, tích phân vật lý dây + kiểm tra đoạt cờ. dt theo now_wall truyền
+        vào (kẹp 0..5s) nên test bước được như mỏ."""
+        effects: List[dict] = []
+        if not self._tug_ready:
+            return effects
+        if self._tug_last_tick_at is None:
+            dt = 0.0
+        else:
+            dt = max(0.0, min(5.0, now_wall - self._tug_last_tick_at))
+        self._tug_last_tick_at = now_wall
+
+        # --- chuyển pha: hết giờ -> công bố 10s -> hiệp mới ---
+        if now_wall >= self.tug_deadline:
+            if self.tug_phase == "play":
+                effects += self._tug_end_round(now_wall)
+            elif self.tug_phase == "podium":
+                self.tug_round += 1
+                self.tug_phase = "play"
+                self.tug_deadline = now_wall + TUG_ROUND_SECONDS
+
+        # --- khí thế hao dần, thể lực hồi dần ---
+        if dt > 0:
+            for t in TUG_TEAM_NAMES:
+                self.tug_morale[t] = max(
+                    0.0, self.tug_morale[t] - TUG_MORALE_DECAY * dt)
+            for pl in self.players.values():
+                if pl.stamina < 100.0:
+                    pl.stamina = min(100.0, pl.stamina + TUG_STAMINA_REGEN * dt)
+
+        # --- vật lý dây (chỉ trong giờ đấu) ---
+        if self.tug_phase == "play" and dt > 0:
+            self.tug_pos += self.tug_vel * dt
+            self.tug_vel *= math.exp(-TUG_DAMPING * dt)
+            # Cả phòng im ắng > 5s: dây tự nhích về giữa cho đỡ bế tắc
+            # (chỉ trong vùng ±20, tránh lật ngược thế trận đang lệch sâu).
+            if (now_wall - self._tug_last_pull_wall > 5.0
+                    and 0.0 < abs(self.tug_pos) < 20.0):
+                creep = min(abs(self.tug_pos), 0.4 * dt)
+                self.tug_pos -= math.copysign(creep, self.tug_pos)
+            self.tug_pos = max(-100.0, min(100.0, self.tug_pos))
+            if abs(self.tug_pos) >= TUG_WIN_POS:
+                effects += self._tug_end_round(now_wall)
+        return effects
+
     # ------------------------------------------------------- Vườn Mèo: tính cách
     def _assign_cat(self, p: Player) -> None:
         """Gán tính cách ổn định theo tên + tung xúc xắc Mèo Vàng đúng 1 lần/phiên."""
@@ -963,11 +1230,13 @@ class GameState:
     def set_stage_mode(self, mode: str, boss_max_hp: Optional[int] = None,
                        boss_taunts: Optional[bool] = None,
                        boss_skin: Optional[str] = None) -> None:
-        """Đổi chế độ sân khấu (run | boss | garden | miner) + áp máu boss / thoại từ config."""
-        if mode not in ("run", "boss", "garden", "miner"):
+        """Đổi chế độ sân khấu (run | boss | garden | miner | tug) + áp máu boss / thoại từ config."""
+        if mode not in ("run", "boss", "garden", "miner", "tug"):
             return
         if mode == "miner":
             self._miner_ensure()
+        if mode == "tug":
+            self._tug_ensure()
         if boss_taunts is not None:
             self.boss_taunts = bool(boss_taunts)
         if boss_skin is not None:
@@ -1219,6 +1488,35 @@ class GameState:
                               key=lambda p: (-p.gold_total, p.joined_at))[:5]
             snap["miner_top"] = [{"name": p.nickname, "gold": p.gold_total,
                                   "team": p.team} for p in top_gold]
+        if self.stage_mode == "tug":
+            self._tug_ensure()
+            now_t = time.time()
+            buffs_snap = {}
+            for team in TUG_TEAM_NAMES:
+                buff = self.tug_buffs.get(team) or {}
+                until = float(buff.get("until", 0.0))
+                buffs_snap[team] = {
+                    "mult": float(buff.get("mult", 1.0)) if now_t < until else 1.0,
+                    "until": until,
+                }
+            snap["tug"] = {
+                "round": self.tug_round,
+                "phase": self.tug_phase,
+                "time_left": max(0, round(self.tug_deadline - now_t)),
+                "pos": round(self.tug_pos, 1),
+                "wins": dict(self.tug_wins),
+                "members": {"cam": self._tug_team_size("cam"),
+                            "xam": self._tug_team_size("xam")},
+                "morale": {t: round(self.tug_morale[t]) for t in TUG_TEAM_NAMES},
+                "buffs": buffs_snap,
+                "drums_until": self.tug_drums_until,
+            }
+            top_force = sorted(self.players.values(),
+                               key=lambda p: (-p.tug_force, p.joined_at))[:5]
+            snap["tug_top"] = [{"name": p.nickname,
+                                "force": round(p.tug_force, 1),
+                                "pulls": p.tug_pulls,
+                                "team": p.tug_team} for p in top_force]
         return snap
 
     # ------------------------------------------------------------- sự kiện
@@ -1265,6 +1563,21 @@ class GameState:
                 return effects
             if text == "dao":
                 effects += self._miner_try_dao(p, now)
+                return effects
+
+        # --- Kéo Co: vào đội (CAM / XÁM) + kéo dây (KÉO) + hò (HÒ / HÒ DÔ) ---
+        if self.stage_mode == "tug":
+            if text in ("cam", "doi cam"):
+                effects += self._tug_join_team(p, "cam", now)
+                return effects
+            if text in ("xam", "doi xam"):
+                effects += self._tug_join_team(p, "xam", now)
+                return effects
+            if text == "keo":
+                effects += self._tug_try_pull(p, now)
+                return effects
+            if text in ("ho", "ho do"):
+                effects += self._tug_try_cheer(p, now)
                 return effects
 
         # --- Vườn Mèo: cả vườn phản ứng THEO TÍNH CÁCH với bình luận ---
@@ -1506,6 +1819,25 @@ class GameState:
                     "speak_priority": 1,
                 })
             return effects
+        if self.stage_mode == "tug":
+            # Kéo Co: tim nạp trống hội; đầy like_goal -> TRỐNG HỘI NỔI LÊN:
+            # cả 2 đội kéo mạnh x1.5 trong 15s, chu trình tim reset như các chế độ.
+            self._tug_ensure()
+            self.likes_since_rain += count
+            effects: List[dict] = [{"type": "likes",
+                                    "likes_since_rain": self.likes_since_rain,
+                                    "like_goal": self.like_goal,
+                                    "total_likes": self.total_likes}]
+            if self.likes_since_rain >= self.like_goal:
+                self.likes_since_rain = 0
+                self.tug_drums_until = time.time() + TUG_DRUMS_SECONDS
+                effects.append({
+                    "type": "tug_drums",
+                    "until": self.tug_drums_until,
+                    "speak": "🥁 TRỐNG HỘI NỔI LÊN! Cả hai đội kéo mạnh hẳn — HÒ DÔ TA!",
+                    "speak_priority": 1,
+                })
+            return effects
         if self.stage_mode == "boss":
             # Chế độ Đánh Boss: tim nạp thanh Nộ thay cho đếm mưa cá.
             # Đầy Nộ -> mưa cá trút xuống boss, sát thương cả đội (không tính riêng ai).
@@ -1664,6 +1996,31 @@ class GameState:
                 effects.append({"type": "miner_buff", "team": team,
                                 "mult": mult, "until": now_wall + seconds,
                                 "user": p.unique_id, "name": p.nickname})
+        # Kéo Co: quà (khi tự đến) buff lực kéo cho đội người tặng; quà thật to
+        # (>=100 kim cương) -> GIẬT SIÊU CẤP: dây nhảy thẳng 12 đơn vị về phía
+        # đội mình (có thể đoạt cờ luôn). Chỉ là phản ứng cảm ơn, KHÔNG kêu gọi quà.
+        if self.stage_mode == "tug":
+            self._tug_ensure()
+            d = int(diamond_count or 1)
+            if p.tug_team is None:
+                p.tug_team = self._tug_smaller_team()
+            team = p.tug_team
+            now_wall = time.time()
+            if d >= 100:
+                self.tug_pos = max(-100.0, min(
+                    100.0, self.tug_pos + TUG_DIRS[team] * TUG_SUPER_YANK))
+                effects.append({"type": "tug_super", "team": team,
+                                "user": p.unique_id, "name": p.nickname,
+                                "pos": round(self.tug_pos, 1)})
+                if (self.tug_phase == "play"
+                        and abs(self.tug_pos) >= TUG_WIN_POS):
+                    effects += self._tug_end_round(now_wall)
+            else:
+                mult, seconds = (1.6, 30) if d >= 10 else (1.3, 15)
+                buff = self._tug_set_buff(team, mult, seconds, now_wall)
+                effects.append({"type": "tug_buff", "team": team,
+                                "mult": buff["mult"], "until": buff["until"],
+                                "user": p.unique_id, "name": p.nickname})
         return effects
 
     def handle_follow(self, unique_id: str, nickname: str,
@@ -1691,6 +2048,16 @@ class GameState:
             # (+25 tim vườn) — và KHÔNG có màn chó đuổi như chế độ chạy.
             self.garden_hearts += 25
             effects += self._garden_check_golden_hour(time.time())
+        if self.stage_mode == "tug":
+            # Kéo Co: follow -> vào đội ít người hơn (nếu chưa có đội) +
+            # nạp thêm chút khí thế cho đội của mình.
+            self._tug_ensure()
+            if p.tug_team is None:
+                p.tug_team = self._tug_smaller_team()
+            self.tug_morale[p.tug_team] = min(
+                100.0, self.tug_morale[p.tug_team] + 10)
+            effects.append({"type": "tug_follow", "user": p.unique_id,
+                            "name": p.nickname, "team": p.tug_team})
         return effects
 
     def handle_share(self, unique_id: str, nickname: str,
@@ -1769,6 +2136,10 @@ class GameState:
         # --- Đào Vàng PK: nhịp hiệp + mô phỏng móc ---
         if self.stage_mode == "miner":
             effects += self._miner_tick(now_wall)
+
+        # --- Kéo Co: nhịp hiệp + vật lý dây ---
+        if self.stage_mode == "tug":
+            effects += self._tug_tick(now_wall)
 
         # --- Đánh Boss: xướng boss xuất hiện 1 lần + hồi sinh sau 15s ---
         if self.stage_mode == "boss":

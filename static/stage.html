@@ -15,6 +15,7 @@
     <p id="titleBoss">🐭 ĐÁNH BOSS • Gõ CÀO để tấn công • ❤️ Thả tim nạp Nộ → mưa cá trút xuống boss</p>
     <p id="titleGarden">🌿 VƯỜN MÈO • Mỗi mèo một tính cách • Gõ lệnh là mèo phản ứng theo tính cách</p>
     <p id="titleMiner">⛏️ ĐÀO VÀNG PK • Gõ MÈO/CHUỘT vào đội • ĐÀO để thả móc • ❤️ Đủ tim → NỔ MÌN</p>
+    <p id="titleTug">🪢 KÉO CO • Gõ CAM/XÁM vào đội • KÉO kéo dây • HÒ lấy sức</p>
   </header>
 
   <aside id="statsPanel" class="panel">
@@ -98,6 +99,19 @@
     <div class="miner-blast-bar"><div id="minerBlastFill"></div></div>
   </section>
 
+  <section id="tugBoard" class="panel">
+    <h2>🪢 KÉO CO LÀNG BUG</h2>
+    <div class="tug-status" id="tugStatusCam">🟠 Đội Mèo Cam: 0 mèo • 🔥 tinh thần 0</div>
+    <div class="tug-status" id="tugStatusXam">⚪ Đội Mèo Xám: 0 mèo • 🔥 tinh thần 0</div>
+    <ul>
+      <li>🟠 <b>"cam"</b> / ⚪ <b>"xám"</b>: vào đội</li>
+      <li>🪢 <b>"kéo"</b>: kéo dây cho đội mình</li>
+      <li>📣 <b>"hò"</b>: hò lấy sức — tinh thần ↑, kéo mạnh hơn</li>
+      <li>🎁 Quà tới: đội được tăng sức kéo — quà to có Siêu Giật</li>
+      <li>❤️ Thả tim đủ <b id="tugDrumsGoal">500</b>: NỔI TRỐNG HỘI — 2 đội mạnh hẳn</li>
+    </ul>
+  </section>
+
   <div id="bossHud">
     <div id="bossChip">🐭 <span id="bossName">CHUỘT TRÙM RĂNG SẮT</span> — Vòng <span id="bossRound">1</span></div>
     <div class="boss-hp-bar"><div id="bossHpFill"></div><span id="bossHpText">1000 / 1000</span></div>
@@ -132,9 +146,19 @@
     <ol id="minerTopList"></ol>
   </aside>
 
+  <aside id="tugTop" class="panel">
+    <h2>💪 TOP LỰC SĨ</h2>
+    <ol id="tugTopList"></ol>
+  </aside>
+
   <div id="minerBanner" class="hidden">
     <div id="minerBannerTitle">🏆 HẾT HIỆP!</div>
     <div id="minerBannerSub"></div>
+  </div>
+
+  <div id="tugBanner" class="hidden">
+    <div id="tugBannerTitle">🏆 HẾT HIỆP!</div>
+    <div id="tugBannerSub"></div>
   </div>
 
   <div id="bossBanner" class="hidden">

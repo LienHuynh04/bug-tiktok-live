@@ -206,6 +206,7 @@ function setModeUI(mode) {
   $("modeBoss").classList.toggle("primary", mode === "boss");
   $("modeGarden").classList.toggle("primary", mode === "garden");
   $("modeMiner").classList.toggle("primary", mode === "miner");
+  $("modeTug").classList.toggle("primary", mode === "tug");
 }
 $("modeRun").onclick = async () => {
   await post("/api/config", { stage_mode: "run" });
@@ -226,6 +227,11 @@ $("modeMiner").onclick = async () => {
   await post("/api/config", { stage_mode: "miner" });
   setModeUI("miner");
   log("Chế độ sân khấu: ⛏️ Đào Vàng PK — Đội Mèo vs Đội Chuột");
+};
+$("modeTug").onclick = async () => {
+  await post("/api/config", { stage_mode: "tug" });
+  setModeUI("tug");
+  log("Chế độ sân khấu: 🪢 Kéo Co — Đội Mèo Cam vs Đội Mèo Xám");
 };
 $("bossMaxHp").onchange = async () => {
   await post("/api/config", { boss_max_hp: Number($("bossMaxHp").value) || 1000 });
@@ -290,4 +296,8 @@ ws.onmessage = (ev) => {
   else if (msg.type === "miner_round_end") log("⛏️🏆 Hết hiệp " + msg.round + ": " + (msg.winner ? "Đội " + (msg.winner === "meo" ? "Mèo" : "Chuột") + " thắng " : "Hoà ") + msg.score_meo + "–" + msg.score_chuot + (msg.mvp_name ? " • 👑 " + msg.mvp_name + " (" + msg.mvp_gold + " vàng)" : ""));
   else if (msg.type === "miner_blast") log("⛏️💥 NỔ MÌN! Đá bay hết, vàng lộ ra!");
   else if (msg.type === "miner_golden_grab") log("⛏️🌟 Móc Vàng — Đội " + (msg.team === "meo" ? "Mèo" : "Chuột") + " chĩa thẳng " + msg.kind + "!");
+  else if (msg.type === "tug_round_end") log("🪢🏆 Hết hiệp " + msg.round + ": " + (msg.winner && msg.winner !== "draw" ? "Đội " + (msg.winner === "cam" ? "Mèo Cam" : "Mèo Xám") + " thắng " : "Hoà ") + "• hiệp thắng 🟠 " + (msg.wins ? msg.wins.cam || 0 : 0) + "–" + (msg.wins ? msg.wins.xam || 0 : 0) + " ⚪" + (msg.mvp_name ? " • 💪 " + msg.mvp_name + " (" + msg.mvp_force + " lực)" : ""));
+  else if (msg.type === "tug_drums") log("🪢🥁 Trống hội nổi lên — cả hai đội kéo mạnh hẳn!");
+  else if (msg.type === "tug_super") log("🪢💥 Siêu Giật — Đội " + (msg.team === "cam" ? "Mèo Cam" : "Mèo Xám") + " giật cờ một đoạn dài (quà của " + msg.name + ")!");
+  else if (msg.type === "tug_buff") log("🪢⚡ Buff sức ×" + msg.mult + " cho Đội " + (msg.team === "cam" ? "Mèo Cam" : "Mèo Xám") + " (quà của " + msg.name + ")");
 };

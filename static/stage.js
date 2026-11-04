@@ -349,11 +349,12 @@ let bossSyncTimer = null;
 const BOSS_BAR_HP = 250;           // mỗi thanh máu trên HUD = 250 HP (khớp game.py)
 
 function setStageMode(mode) {
-  if (mode !== "run" && mode !== "boss" && mode !== "garden" && mode !== "miner") return;
+  if (mode !== "run" && mode !== "boss" && mode !== "garden" && mode !== "miner" && mode !== "tug") return;
   stageMode = mode;
   $("stage").classList.toggle("boss-mode", mode === "boss");
   $("stage").classList.toggle("garden-mode", mode === "garden");
   $("stage").classList.toggle("miner-mode", mode === "miner");
+  $("stage").classList.toggle("tug-mode", mode === "tug");
   // nền boss tối sâu -> panel chuyển kính tối cho khỏi "nổi" lạc tông (chỉ boss)
   $("stage").classList.toggle("boss-dark", mode === "boss");
   // Banner hướng dẫn đổi ngay theo chế độ (không chờ vòng xoay 6s)
@@ -536,6 +537,19 @@ const minerFx = {
   goldenGlow: { meo: false, chuot: false }, // dây móc phát sáng vàng khi Móc Vàng
 };
 
+/* ================= chế độ Kéo Co ================= */
+let tugState = null;               // snapshot "tug" mới nhất từ server
+let tugRoundEnd = null;            // sự kiện tug_round_end gần nhất (cho banner podium)
+const TUG_TEAM_NAMES = { cam: "Mèo Cam", xam: "Mèo Xám" };
+const tugFx = {
+  heaveUntil: { cam: 0, xam: 0 },  // mốc hết nhịp "HÒ DÔ" gồng kéo của mỗi đội
+  cheerBubbleAt: { cam: 0, xam: 0 }, // throttle bong bóng HÒ DÔ (1 lần / 2s / đội)
+  confetti: [],     // {x, y, vx, vy, rot, vr, col, t0} pháo giấy đội thắng hiệp
+  shakeUntil: 0,    // rung màn hình khi Siêu Giật
+  flashUntil: 0,    // chớp sáng khi Siêu Giật
+};
+let tugDispPos = 0;                // vị trí cờ hiển thị (nội suy mượt về pos thật)
+
 // Đầu móc theo đúng công thức server: tip = pivot + len * 0.825 * (sin, cos)(góc)
 function minerTipPx(team, W, H) {
   const piv = MINER_PIVOTS[team];
@@ -600,11 +614,49 @@ function updateMiner(s) {
   }
 }
 
+function updateTug(s) {
+  tugState = s.tug;
+  const t = tugState;
+  if (!t) return;
+  const nowSec = Date.now() / 1000;
+  for (const team of ["cam", "xam"]) {
+    const buff = t.buffs ? t.buffs[team] : null;
+    const buffTxt = buff && buff.mult > 1 && buff.until > nowSec ? ` • ⚡ sức ×${buff.mult}` : "";
+    $(team === "cam" ? "tugStatusCam" : "tugStatusXam").textContent =
+      `${team === "cam" ? "🟠" : "⚪"} ${TUG_TEAM_NAMES[team]}: ${(t.members || {})[team] || 0} mèo • 🔥 tinh thần ${(t.morale || {})[team] || 0}${buffTxt}`;
+  }
+  if (typeof s.like_goal === "number") $("tugDrumsGoal").textContent = s.like_goal;
+  const top = s.tug_top || [];
+  $("tugTopList").innerHTML = top.length
+    ? top.map((e, i) => `<li><span class="rname">${i + 1}. ${e.team === "xam" ? "⚪" : e.team === "cam" ? "🟠" : "🐱"} ${escapeHtml(e.name)}</span><span class="rkm">💪 ${Math.round(e.force || 0)}</span></li>`).join("")
+    : `<li><span class="rname">Chưa có lực sĩ nào — gõ "cam"/"xám" vào đội!</span></li>`;
+  // banner chỉ hiện trong pha nghỉ giữa hiệp (podium)
+  if (t.phase === "podium") {
+    const e = tugRoundEnd;
+    if (e && e.round === t.round) {
+      $("tugBannerTitle").textContent = e.winner && e.winner !== "draw"
+        ? `🏆 ĐỘI ${TUG_TEAM_NAMES[e.winner].toUpperCase()} THẮNG HIỆP ${e.round}!`
+        : `🤝 HIỆP ${e.round} HOÀ!`;
+      $("tugBannerSub").innerHTML =
+        `Hiệp thắng: 🟠 ${e.wins ? e.wins.cam || 0 : 0} — ${e.wins ? e.wins.xam || 0 : 0} ⚪<br>` +
+        (e.mvp_name ? `💪 Lực sĩ của hiệp: ${escapeHtml(e.mvp_name)} — ${e.mvp_force || 0} lực`
+          : "Chưa có ai kéo hiệp này");
+    } else {
+      $("tugBannerTitle").textContent = `⏸️ HẾT HIỆP ${t.round}`;
+      $("tugBannerSub").textContent = "Nghỉ giữa hiệp — hiệp mới sắp bắt đầu!";
+    }
+    $("tugBanner").classList.remove("hidden");
+  } else {
+    $("tugBanner").classList.add("hidden");
+  }
+}
+
 function renderSnapshot(s) {
   if (s.stage_mode) setStageMode(s.stage_mode);
   if (s.boss) updateBoss(s.boss);
   if (s.garden) updateGarden(s);
   if (s.miner) updateMiner(s);
+  if (s.tug) updateTug(s);
   if (s.players) {
     s.players.forEach(upsertPlayer);
     rankedPlayers = [...s.players].sort((a, b) => (b.distance_km || 0) - (a.distance_km || 0));
@@ -708,10 +760,18 @@ const MINER_GUIDE_TEXTS = [
   "❤️ Thả tim đủ là NỔ MÌN phá đá, lộ vàng!",
   "🏆 Đào nhiều vàng nhất hiệp = Vua Đào Vàng!",
 ];
+const TUG_GUIDE_TEXTS = [
+  "🪢 Gõ \"cam\" hoặc \"xám\" để vào đội kéo co!",
+  "💪 Gõ \"kéo\" liên tục — kéo nhiều là mệt, nhớ nghỉ lấy sức!",
+  "📣 Gõ \"hò\" để lên tinh thần — đội kéo mạnh hẳn!",
+  "❤️ Thả tim đủ là NỔI TRỐNG HỘI, cả hai đội sung sức!",
+  "🏆 Kéo cờ qua vạch 85 là thắng hiệp — HÒ DÔ TA!",
+];
 function guideTextsFor(mode) {
   return mode === "boss" ? BOSS_GUIDE_TEXTS
     : mode === "garden" ? GARDEN_GUIDE_TEXTS
-    : mode === "miner" ? MINER_GUIDE_TEXTS : GUIDE_TEXTS;
+    : mode === "miner" ? MINER_GUIDE_TEXTS
+    : mode === "tug" ? TUG_GUIDE_TEXTS : GUIDE_TEXTS;
 }
 let guideIdx = 0;
 setInterval(() => {
@@ -2443,6 +2503,616 @@ function drawMinerScene(now, W, H, dt) {
   ctx2d.restore();
 }
 
+/* ================= sân khấu Kéo Co =================
+   Sân đình lễ hội: 2 đội mèo (Cam trái / Xám phải) kéo dây qua vạch giữa,
+   cờ đỏ buộc ở vị trí pos trên dây; Bug làm trọng tài ở vạch giữa. */
+/* Mèo kéo co: thân nghiêng ra xa tâm (gồng kéo), 2 chân trước bám dây,
+   lông theo đội (Cam = vằn cam, Xám = xám). dir: +1 mặt hướng phải, -1 trái. */
+function drawTugCat(x, gy, s, rec, now, opt) {
+  const p = rec.data;
+  const dir = opt.dir;
+  const coat = opt.team === "cam" ? COATS.tabby : COATS.grey;
+  const heave = opt.heave || 0;
+  const tired = !!opt.tired;
+  const tumble = !!opt.tumble;
+  const bobAmp = tired ? 0.018 : 0.04;
+  const bobSpd = tired ? 720 : (opt.drums ? 180 : 250);
+  const bob = Math.sin(now / bobSpd + rec.hue) * s * bobAmp;
+  const lean = tumble ? 1.18 : 0.17 + heave * 0.17 + (tired ? 0.04 : 0);
+
+  // bóng đất (vẽ thẳng, không xoay theo thân)
+  ctx2d.save();
+  ctx2d.fillStyle = "rgba(40,22,8,.3)";
+  ctx2d.beginPath(); ctx2d.ellipse(x, gy + s * 0.07, s * 0.64, s * 0.11, 0, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.restore();
+
+  ctx2d.save();
+  ctx2d.translate(x, gy + bob * 0.35);
+  ctx2d.rotate(-dir * lean);       // nghiêng ra xa tâm sân = ngược hướng mặt
+  ctx2d.scale(dir, 1);             // từ đây vẽ mèo quay mặt sang phải
+  const dip = heave * s * 0.07;    // gồng kéo: thân chùng xuống, lùi ra sau
+  ctx2d.translate(-dip * 0.8, dip);
+  // đuôi dựng sau lưng, vẫy theo nhịp
+  const wag = Math.sin(now / (tired ? 600 : 300) + rec.hue) * s * 0.13;
+  ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = s * 0.12; ctx2d.lineCap = "round";
+  ctx2d.beginPath(); ctx2d.moveTo(-s * 0.5, -s * 0.3);
+  ctx2d.quadraticCurveTo(-s * 0.9, -s * 0.42, -s * 0.8, -s * 0.78 + wag); ctx2d.stroke();
+  // chân: sau trụ vững, trước bước tới
+  ctx2d.fillStyle = coat.dark;
+  ctx2d.beginPath(); ctx2d.ellipse(-s * 0.3, -s * 0.05, s * 0.17, s * 0.075, 0, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.beginPath(); ctx2d.ellipse(s * 0.24, -s * 0.05, s * 0.17, s * 0.075, 0, 0, Math.PI * 2); ctx2d.fill();
+  // thân
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.ellipse(0, -s * 0.42, s * 0.57, s * 0.4, 0, 0, Math.PI * 2); ctx2d.fill();
+  if (opt.team === "cam") { // vằn cam trên lưng
+    ctx2d.save();
+    ctx2d.beginPath(); ctx2d.ellipse(0, -s * 0.42, s * 0.57, s * 0.4, 0, 0, Math.PI * 2); ctx2d.clip();
+    ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = s * 0.065;
+    for (let i = -1; i <= 1; i++) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(i * s * 0.25 - s * 0.12, -s * 0.82);
+      ctx2d.quadraticCurveTo(i * s * 0.25, -s * 0.52, i * s * 0.25 - s * 0.07, -s * 0.28);
+      ctx2d.stroke();
+    }
+    ctx2d.restore();
+  }
+  ctx2d.fillStyle = coat.belly;
+  ctx2d.beginPath(); ctx2d.ellipse(s * 0.1, -s * 0.28, s * 0.33, s * 0.21, 0, 0, Math.PI * 2); ctx2d.fill();
+  // 2 chân trước bám chặt dây thừng (dây vẽ trước mèo, chân vẽ sau = nắm dây)
+  ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = s * 0.1;
+  ctx2d.beginPath(); ctx2d.moveTo(s * 0.3, -s * 0.52); ctx2d.lineTo(s * 0.66, -s * 0.7); ctx2d.stroke();
+  ctx2d.beginPath(); ctx2d.moveTo(s * 0.16, -s * 0.44); ctx2d.lineTo(s * 0.56, -s * 0.78); ctx2d.stroke();
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.arc(s * 0.68, -s * 0.71, s * 0.095, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.beginPath(); ctx2d.arc(s * 0.58, -s * 0.79, s * 0.095, 0, Math.PI * 2); ctx2d.fill();
+  // đầu
+  const hx = s * 0.36, hy = -s * 0.94, hr = s * 0.37;
+  ctx2d.fillStyle = coat.ear;
+  for (const d2 of [-1, 1]) {
+    ctx2d.beginPath();
+    if (tired) { // tai cụp xuống khi mệt
+      ctx2d.moveTo(hx + d2 * hr * 0.75, hy - hr * 0.3);
+      ctx2d.lineTo(hx + d2 * hr * 1.15, hy - hr * 0.62);
+      ctx2d.lineTo(hx + d2 * hr * 1.08, hy - hr * 0.05);
+    } else {
+      ctx2d.moveTo(hx + d2 * hr * 0.7, hy - hr * 0.5);
+      ctx2d.lineTo(hx + d2 * hr * 0.22, hy - hr * 1.16);
+      ctx2d.lineTo(hx + d2 * hr * 1.02, hy - hr * 0.88);
+    }
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.arc(hx, hy, hr, 0, Math.PI * 2); ctx2d.fill();
+  if (opt.team === "cam") { // vằn trên trán
+    ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = s * 0.05;
+    for (const d2 of [-0.4, 0, 0.4]) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(hx + d2 * hr - s * 0.02, hy - hr * 0.98);
+      ctx2d.lineTo(hx + d2 * hr, hy - hr * 0.68);
+      ctx2d.stroke();
+    }
+  }
+  // mặt: mắt nheo gồng sức (mệt thì lim dim), miệng há khi đội đang gồng mạnh
+  ctx2d.strokeStyle = "#3a2a20"; ctx2d.fillStyle = "#3a2a20"; ctx2d.lineCap = "round";
+  const eyeY = hy - hr * 0.02, eyeDx = hr * 0.37, eyeR = hr * 0.1;
+  ctx2d.lineWidth = 2.3;
+  for (const d2 of [-1, 1]) {
+    ctx2d.beginPath();
+    if (tired) { // mắt lim dim: gạch ngang hơi cong
+      ctx2d.moveTo(hx + d2 * eyeDx - eyeR, eyeY);
+      ctx2d.quadraticCurveTo(hx + d2 * eyeDx, eyeY + eyeR * 0.7, hx + d2 * eyeDx + eyeR, eyeY);
+    } else { // mắt nheo: 2 vạch chéo kiểu > <
+      ctx2d.moveTo(hx + d2 * eyeDx - eyeR * 0.8, eyeY - eyeR * 0.9);
+      ctx2d.lineTo(hx + d2 * eyeDx + eyeR * 0.5, eyeY);
+      ctx2d.lineTo(hx + d2 * eyeDx - eyeR * 0.8, eyeY + eyeR * 0.9);
+    }
+    ctx2d.stroke();
+  }
+  ctx2d.fillStyle = "#ff7d9c";
+  ctx2d.beginPath();
+  ctx2d.moveTo(hx + hr * 0.18, hy + hr * 0.2); ctx2d.lineTo(hx + hr * 0.38, hy + hr * 0.2);
+  ctx2d.lineTo(hx + hr * 0.28, hy + hr * 0.34); ctx2d.closePath(); ctx2d.fill();
+  if (heave > 0.55 && !tumble) { // há miệng hô "hò dô" khi gồng
+    ctx2d.fillStyle = "#7a2e2e";
+    ctx2d.beginPath(); ctx2d.ellipse(hx + hr * 0.28, hy + hr * 0.52, hr * 0.13, hr * 0.16, 0, 0, Math.PI * 2); ctx2d.fill();
+  }
+  ctx2d.strokeStyle = "rgba(58,42,32,.4)"; ctx2d.lineWidth = 1.4;
+  for (const k of [-1, 1]) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(hx + hr * 0.62, hy + hr * 0.26 + k * hr * 0.1);
+    ctx2d.lineTo(hx + hr * 1.1, hy + hr * 0.2 + k * hr * 0.2);
+    ctx2d.stroke();
+  }
+  // huy chương avatar / chữ cái đầu tên ở ngực
+  const mx = s * 0.26, my = -s * 0.36, mr = s * 0.165;
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.arc(mx, my, mr, 0, Math.PI * 2); ctx2d.clip();
+  if (rec.imgOk && rec.img) {
+    ctx2d.drawImage(rec.img, mx - mr, my - mr, mr * 2, mr * 2);
+  } else {
+    ctx2d.fillStyle = `hsl(${rec.hue} 55% 45%)`;
+    ctx2d.fillRect(mx - mr, my - mr, mr * 2, mr * 2);
+    ctx2d.fillStyle = "#fff";
+    ctx2d.font = `800 ${mr * 1.05}px sans-serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText((p.nickname || "?").slice(0, 1).toUpperCase(), mx, my + 1);
+  }
+  ctx2d.restore();
+  ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 2;
+  ctx2d.beginPath(); ctx2d.arc(mx, my, mr, 0, Math.PI * 2); ctx2d.stroke();
+  if (tired) { // mồ hôi văng khi kiệt sức
+    ctx2d.font = `${s * 0.3}px serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("💦", hx + hr * 1.15, hy - hr * 0.4 + Math.sin(now / 200 + rec.hue) * s * 0.04);
+  }
+  ctx2d.restore();
+
+  // thẻ tên + số cú kéo (vẽ thẳng theo màn hình, không xoay theo thân)
+  ctx2d.save();
+  ctx2d.translate(x, gy + bob * 0.35);
+  const shortName = (p.nickname || "?").length > 10 ? (p.nickname || "?").slice(0, 10) + "…" : (p.nickname || "?");
+  const label = `${shortName}${p.tug_pulls ? ` 💪${p.tug_pulls}` : ""}`;
+  ctx2d.font = `600 ${Math.max(11, s * 0.27)}px sans-serif`;
+  const tw = ctx2d.measureText(label).width + 14;
+  const ly = -s * 1.62 - (opt.tagLift || 0); // thẻ tên so le 2 tầng để mèo đứng sát nhau vẫn đọc được
+  ctx2d.fillStyle = opt.team === "cam" ? "rgba(94,44,0,.88)" : "rgba(30,38,48,.88)";
+  ctx2d.beginPath(); ctx2d.roundRect(-tw / 2, ly - s * 0.2, tw, s * 0.42, 8); ctx2d.fill();
+  ctx2d.fillStyle = "#fff"; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  ctx2d.fillText(label, 0, ly + s * 0.02);
+  if (tumble) {
+    ctx2d.font = `${s * 0.42}px serif`;
+    ctx2d.fillText("💫", 0, ly - s * 0.62 + Math.sin(now / 160) * s * 0.05);
+  }
+  if (rec.bubbleUntil > now && rec.bubble) {
+    ctx2d.font = `${Math.max(11, s * 0.3)}px sans-serif`;
+    const bw = Math.min(260, ctx2d.measureText(rec.bubble).width + 16);
+    const by = ly - s * 0.62;
+    ctx2d.fillStyle = "#fff";
+    ctx2d.beginPath(); ctx2d.roundRect(-bw / 2, by - s * 0.2, bw, s * 0.42, 10); ctx2d.fill();
+    ctx2d.fillStyle = "#17304f";
+    ctx2d.fillText(rec.bubble, 0, by + s * 0.02, bw - 10);
+  }
+  ctx2d.restore();
+}
+
+/* HUD kéo co: chip 2 đội ở 2 góc trên (avatar + vòng số hiệp thắng) kiểu
+   ảnh mẫu 2 người chơi + thước đo vị trí cờ ở giữa + thanh tinh thần */
+function drawTugHud(now, W, H) {
+  const t = tugState;
+  const nowSec = Date.now() / 1000;
+  const drums = !!(t && t.drums_until > nowSec);
+  // --- thước đo vị trí cờ (−100..+100) ---
+  const x0 = W * 0.14, x1 = W * 0.86, y = H * 0.058, bh = H * 0.017;
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.roundRect(x0, y, x1 - x0, bh, bh / 2); ctx2d.clip();
+  const gl = ctx2d.createLinearGradient(x0, 0, W / 2, 0);
+  gl.addColorStop(0, "#e67e22"); gl.addColorStop(1, "#ff9f1a");
+  ctx2d.fillStyle = gl; ctx2d.fillRect(x0, y, (x1 - x0) / 2, bh);
+  const gr = ctx2d.createLinearGradient(W / 2, 0, x1, 0);
+  gr.addColorStop(0, "#aeb9c4"); gr.addColorStop(1, "#7c8791");
+  ctx2d.fillStyle = gr; ctx2d.fillRect(W / 2, y, (x1 - x0) / 2, bh);
+  // vùng thắng ở 2 đầu (±85)
+  ctx2d.fillStyle = "rgba(230, 57, 70, .45)";
+  ctx2d.fillRect(x0, y, (x1 - x0) * 0.075, bh);
+  ctx2d.fillRect(x1 - (x1 - x0) * 0.075, y, (x1 - x0) * 0.075, bh);
+  ctx2d.fillStyle = "rgba(255,255,255,.35)"; ctx2d.fillRect(x0, y, x1 - x0, bh * 0.38);
+  ctx2d.restore();
+  ctx2d.strokeStyle = "rgba(10, 6, 20, .55)"; ctx2d.lineWidth = 2;
+  ctx2d.beginPath(); ctx2d.roundRect(x0, y, x1 - x0, bh, bh / 2); ctx2d.stroke();
+  // vạch giữa + con trỏ vị trí cờ
+  const mxp = W / 2 + (tugDispPos / 100) * ((x1 - x0) / 2);
+  ctx2d.strokeStyle = "rgba(255,255,255,.65)"; ctx2d.lineWidth = 1.6;
+  ctx2d.beginPath(); ctx2d.moveTo(W / 2, y - 2); ctx2d.lineTo(W / 2, y + bh + 2); ctx2d.stroke();
+  ctx2d.fillStyle = "#e63946";
+  ctx2d.beginPath();
+  ctx2d.moveTo(mxp, y - bh * 0.5); ctx2d.lineTo(mxp + 6, y - 1); ctx2d.lineTo(mxp, y + bh + bh * 0.5 - 2);
+  ctx2d.lineTo(mxp - 6, y - 1); ctx2d.closePath(); ctx2d.fill();
+  ctx2d.strokeStyle = "#fff"; ctx2d.lineWidth = 3;
+  ctx2d.beginPath(); ctx2d.moveTo(mxp, y - 2); ctx2d.lineTo(mxp, y + bh + 2); ctx2d.stroke();
+  // nhãn đội 2 đầu thước
+  ctx2d.font = `800 ${H * 0.0135}px sans-serif`;
+  ctx2d.textBaseline = "middle";
+  ctx2d.fillStyle = "#ffb066"; ctx2d.textAlign = "left";
+  ctx2d.fillText("🟠 CAM", x0 + 8, y + bh / 2 + 1);
+  ctx2d.fillStyle = "#e8edf2"; ctx2d.textAlign = "right";
+  ctx2d.fillText("XÁM ⚪", x1 - 8, y + bh / 2 + 1);
+  // huy hiệu giữa: HIỆP n • thời gian
+  const badge = !t ? "🪢 KÉO CO"
+    : t.phase === "podium" ? `⏸️ NGHỈ • HIỆP ${t.round}`
+    : `HIỆP ${t.round} • ${t.time_left}s`;
+  ctx2d.font = `800 ${H * 0.0155}px sans-serif`;
+  const bw = ctx2d.measureText(badge).width + 30;
+  ctx2d.fillStyle = "rgba(12, 8, 26, .88)";
+  ctx2d.beginPath(); ctx2d.roundRect(W / 2 - bw / 2, y - bh * 0.22, bw, bh * 1.44, 99); ctx2d.fill();
+  ctx2d.strokeStyle = "#ff9f43"; ctx2d.lineWidth = 1.6;
+  ctx2d.beginPath(); ctx2d.roundRect(W / 2 - bw / 2, y - bh * 0.22, bw, bh * 1.44, 99); ctx2d.stroke();
+  ctx2d.fillStyle = "#ffd88a"; ctx2d.textAlign = "center";
+  ctx2d.fillText(badge, W / 2, y + bh / 2 + 1);
+  // trống hội đang nổi: pill nhấp nháy ngay dưới thước
+  if (drums) {
+    const label = "🥁 TRỐNG HỘI!";
+    ctx2d.font = `900 ${H * 0.015}px sans-serif`;
+    const dw = ctx2d.measureText(label).width + 26;
+    ctx2d.save();
+    ctx2d.globalAlpha = 0.82 + 0.18 * Math.sin(now / 120);
+    ctx2d.fillStyle = "rgba(160, 30, 20, .92)";
+    ctx2d.beginPath(); ctx2d.roundRect(W / 2 - dw / 2, y + bh + H * 0.008, dw, H * 0.024, 99); ctx2d.fill();
+    ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 1.6;
+    ctx2d.beginPath(); ctx2d.roundRect(W / 2 - dw / 2, y + bh + H * 0.008, dw, H * 0.024, 99); ctx2d.stroke();
+    ctx2d.fillStyle = "#ffe9a8";
+    ctx2d.fillText(label, W / 2, y + bh + H * 0.02);
+    ctx2d.restore();
+  }
+  // --- chip đội ở 2 góc trên + thanh tinh thần bên dưới ---
+  for (const team of ["cam", "xam"]) {
+    const isCam = team === "cam";
+    const chipW = W * 0.3, chipH = H * 0.05;
+    const chipX = isCam ? W * 0.015 : W - W * 0.015 - chipW;
+    const chipY = H * 0.09;
+    ctx2d.fillStyle = "rgba(16, 10, 26, .85)";
+    ctx2d.beginPath(); ctx2d.roundRect(chipX, chipY, chipW, chipH, chipH / 2); ctx2d.fill();
+    ctx2d.strokeStyle = isCam ? "#ff9f1a" : "#b8c4d0"; ctx2d.lineWidth = 1.6;
+    ctx2d.beginPath(); ctx2d.roundRect(chipX, chipY, chipW, chipH, chipH / 2); ctx2d.stroke();
+    // vòng số hiệp thắng ở mép ngoài chip (kiểu vòng "0" trong ảnh mẫu)
+    const wins = t && t.wins ? t.wins[team] || 0 : 0;
+    const wcx = isCam ? chipX + H * 0.028 : chipX + chipW - H * 0.028;
+    const wcy = chipY + chipH / 2, wr = H * 0.0215;
+    ctx2d.fillStyle = "#1d1428";
+    ctx2d.beginPath(); ctx2d.arc(wcx, wcy, wr, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 2.2;
+    ctx2d.beginPath(); ctx2d.arc(wcx, wcy, wr, 0, Math.PI * 2); ctx2d.stroke();
+    ctx2d.fillStyle = "#fff";
+    ctx2d.font = `900 ${H * 0.02}px sans-serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText(String(wins), wcx, wcy + 1);
+    // buff sức đang chạy: tia sét cạnh vòng thắng
+    const buff = t && t.buffs ? t.buffs[team] : null;
+    if (buff && buff.mult > 1 && buff.until > nowSec) {
+      ctx2d.font = `${H * 0.016}px serif`;
+      ctx2d.fillText("⚡", isCam ? wcx + wr + H * 0.012 : wcx - wr - H * 0.012, wcy);
+    }
+    // hàng avatar thành viên (theo số cú kéo) — tối đa 4
+    const mates = [...players.values()]
+      .filter((r) => r.data.tug_team === team)
+      .sort((a, b) => (b.data.tug_pulls || 0) - (a.data.tug_pulls || 0))
+      .slice(0, 4);
+    const ar = H * 0.0165, aStep = H * 0.038;
+    mates.forEach((rec, i) => {
+      const ax = isCam ? wcx + wr + H * 0.014 + ar + i * aStep
+        : wcx - wr - H * 0.014 - ar - i * aStep;
+      ctx2d.save();
+      ctx2d.beginPath(); ctx2d.arc(ax, wcy, ar, 0, Math.PI * 2); ctx2d.clip();
+      if (rec.imgOk && rec.img) {
+        ctx2d.drawImage(rec.img, ax - ar, wcy - ar, ar * 2, ar * 2);
+      } else {
+        ctx2d.fillStyle = `hsl(${rec.hue} 55% 45%)`;
+        ctx2d.fillRect(ax - ar, wcy - ar, ar * 2, ar * 2);
+        ctx2d.fillStyle = "#fff";
+        ctx2d.font = `800 ${ar * 1.05}px sans-serif`;
+        ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+        ctx2d.fillText((rec.data.nickname || "?").slice(0, 1).toUpperCase(), ax, wcy + 1);
+      }
+      ctx2d.restore();
+      ctx2d.strokeStyle = isCam ? "#ffb066" : "#cfd8e3"; ctx2d.lineWidth = 1.6;
+      ctx2d.beginPath(); ctx2d.arc(ax, wcy, ar, 0, Math.PI * 2); ctx2d.stroke();
+    });
+    // icon đội ở mép trong chip
+    ctx2d.font = `${H * 0.017}px serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText(isCam ? "🟠" : "⚪", isCam ? chipX + chipW - H * 0.02 : chipX + H * 0.02, wcy);
+    // thanh tinh thần dưới chip (đội Xám lấp từ phải sang)
+    const morale = t && t.morale ? t.morale[team] || 0 : 0;
+    const barY = chipY + chipH + H * 0.006, barH = H * 0.0075;
+    ctx2d.fillStyle = "rgba(8, 5, 16, .55)";
+    ctx2d.beginPath(); ctx2d.roundRect(chipX, barY, chipW, barH, barH / 2); ctx2d.fill();
+    if (morale > 0) {
+      const fw = chipW * Math.min(100, morale) / 100;
+      const mg = ctx2d.createLinearGradient(chipX, 0, chipX + chipW, 0);
+      if (isCam) { mg.addColorStop(0, "#ff9f1a"); mg.addColorStop(1, "#e63946"); }
+      else { mg.addColorStop(0, "#7c8791"); mg.addColorStop(1, "#d7dde3"); }
+      ctx2d.fillStyle = mg;
+      ctx2d.beginPath();
+      if (isCam) ctx2d.roundRect(chipX, barY, fw, barH, barH / 2);
+      else ctx2d.roundRect(chipX + chipW - fw, barY, fw, barH, barH / 2);
+      ctx2d.fill();
+    }
+    if (morale >= 70) { // tinh thần cao: lửa ở đầu thanh
+      ctx2d.font = `${H * 0.015}px serif`;
+      const fx = isCam ? chipX + chipW * Math.min(100, morale) / 100 : chipX + chipW * (1 - Math.min(100, morale) / 100);
+      ctx2d.fillText("🔥", fx, barY + barH / 2);
+    }
+  }
+  ctx2d.restore();
+}
+
+function drawTugScene(now, W, H, dt) {
+  const t = tugState;
+  const nowSec = Date.now() / 1000;
+  const drums = !!(t && t.drums_until > nowSec);
+  // vị trí cờ hiển thị nội suy mượt về pos thật (Siêu Giật cũng trượt êm)
+  const targetPos = t ? t.pos || 0 : 0;
+  tugDispPos += (targetPos - tugDispPos) * Math.min(1, dt * 6);
+  if (Math.abs(targetPos - tugDispPos) < 0.05) tugDispPos = targetPos;
+
+  ctx2d.save();
+  if (now < tugFx.shakeUntil) { // Siêu Giật: rung màn hình ~250ms
+    const k = Math.max(0, (tugFx.shakeUntil - now) / 250);
+    ctx2d.translate((Math.random() - 0.5) * W * 0.01 * k, (Math.random() - 0.5) * H * 0.006 * k);
+  }
+  // --- nền trời tối bao quát (khu vực panel phủ lên vẫn hài hoà) ---
+  const bg = ctx2d.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#2b1a44"); bg.addColorStop(0.3, "#54264a");
+  bg.addColorStop(0.64, "#38202f"); bg.addColorStop(1, "#1d1020");
+  ctx2d.fillStyle = bg; ctx2d.fillRect(-W * 0.02, 0, W * 1.04, H);
+
+  const bandTop = H * 0.295, groundTop = H * 0.465, GY = H * 0.6;
+  const cx = W / 2, halfSpan = W * 0.44, s = H * 0.05;
+  // --- dải trời hoàng hôn của sân đình ---
+  const sky = ctx2d.createLinearGradient(0, bandTop, 0, groundTop);
+  sky.addColorStop(0, "#8a3b5e"); sky.addColorStop(0.55, "#e2703a"); sky.addColorStop(1, "#ffb257");
+  ctx2d.fillStyle = sky; ctx2d.fillRect(0, bandTop, W, groundTop - bandTop);
+  const sun = ctx2d.createRadialGradient(cx, groundTop, 0, cx, groundTop, W * 0.42);
+  sun.addColorStop(0, "rgba(255, 190, 90, .4)"); sun.addColorStop(1, "rgba(255, 190, 90, 0)");
+  ctx2d.fillStyle = sun; ctx2d.fillRect(0, bandTop, W, groundTop - bandTop);
+  // bóng cây đa ở 2 mép sân
+  for (const sideX of [W * 0.015, W * 0.985]) {
+    ctx2d.fillStyle = "rgba(24, 10, 28, .88)";
+    ctx2d.beginPath(); // tán lá: chùm elip chồng nhau
+    for (const [ox, oy, orx, ory] of [[0, 0, 0.085, 0.05], [-0.05, 0.012, 0.06, 0.038], [0.05, 0.014, 0.062, 0.04], [0, 0.03, 0.07, 0.04]]) {
+      ctx2d.ellipse(sideX + ox * W, bandTop + H * 0.028 + oy * H, orx * W, ory * H, 0, 0, Math.PI * 2);
+    }
+    ctx2d.fill();
+    ctx2d.beginPath(); // thân cây xiên xuống mặt đất
+    ctx2d.moveTo(sideX - W * 0.008, groundTop + H * 0.01);
+    ctx2d.lineTo(sideX + W * 0.006, groundTop + H * 0.01);
+    ctx2d.lineTo(sideX + W * 0.002, bandTop + H * 0.055);
+    ctx2d.lineTo(sideX - W * 0.012, bandTop + H * 0.055);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  // hàng rào + đám đông đầu mèo xem hội dọc mép trên của sân
+  ctx2d.fillStyle = "rgba(20, 9, 24, .55)";
+  ctx2d.fillRect(0, bandTop, W, H * 0.027);
+  for (let i = 0; i < 24; i++) {
+    const hx2 = (i + 0.5) * (W / 24);
+    const hy2 = bandTop + H * 0.02 + Math.sin(now / 430 + i * 1.93) * H * 0.0016;
+    const hr2 = W * 0.0105;
+    ctx2d.fillStyle = "rgba(16, 7, 22, .88)";
+    ctx2d.beginPath(); // tai
+    ctx2d.moveTo(hx2 - hr2 * 0.85, hy2 - hr2 * 0.45);
+    ctx2d.lineTo(hx2 - hr2 * 0.4, hy2 - hr2 * 1.25);
+    ctx2d.lineTo(hx2 - hr2 * 0.05, hy2 - hr2 * 0.6);
+    ctx2d.moveTo(hx2 + hr2 * 0.85, hy2 - hr2 * 0.45);
+    ctx2d.lineTo(hx2 + hr2 * 0.4, hy2 - hr2 * 1.25);
+    ctx2d.lineTo(hx2 + hr2 * 0.05, hy2 - hr2 * 0.6);
+    ctx2d.fill();
+    ctx2d.beginPath(); ctx2d.arc(hx2, hy2, hr2, 0, Math.PI * 2); ctx2d.fill();
+  }
+  // dây cờ hội ngũ sắc vắt ngang sân (2 dây, cờ bay phần phật)
+  const flagCols = ["#e63946", "#ffd23f", "#3aa0ff", "#7be495", "#ff9f1a"];
+  for (let str = 0; str < 2; str++) {
+    const yBase = bandTop + H * (0.042 + str * 0.026), sag = H * 0.017;
+    ctx2d.strokeStyle = "rgba(30, 15, 10, .5)"; ctx2d.lineWidth = 1.5;
+    ctx2d.beginPath();
+    for (let x = 0; x <= W; x += W / 24) {
+      const yy = yBase + Math.sin((x / W) * Math.PI) * sag;
+      if (x === 0) ctx2d.moveTo(x, yy); else ctx2d.lineTo(x, yy);
+    }
+    ctx2d.stroke();
+    const nF = 26;
+    for (let i = 0; i < nF; i++) {
+      const fx = ((i + 0.5) / nF) * W;
+      const fy = yBase + Math.sin((fx / W) * Math.PI) * sag;
+      const fw = W * 0.015, fh = H * 0.013;
+      const flutter = Math.sin(now / (drums ? 140 : 320) + i * 1.3 + str * 2.1) * W * 0.0035;
+      ctx2d.fillStyle = flagCols[(i + str * 2) % flagCols.length];
+      ctx2d.beginPath();
+      ctx2d.moveTo(fx - fw / 2, fy); ctx2d.lineTo(fx + fw / 2, fy);
+      ctx2d.lineTo(fx + flutter, fy + fh);
+      ctx2d.closePath(); ctx2d.fill();
+    }
+  }
+  // --- mặt đất sân đình: đất nện + vạch giữa + 2 vạch thắng ±85 ---
+  const dirt = ctx2d.createLinearGradient(0, groundTop, 0, H * 0.645);
+  dirt.addColorStop(0, "#b3814a"); dirt.addColorStop(0.6, "#8a5a2b"); dirt.addColorStop(1, "#6e4520");
+  ctx2d.fillStyle = dirt; ctx2d.fillRect(0, groundTop, W, H * 0.645 - groundTop);
+  ctx2d.fillStyle = "rgba(60, 35, 10, .14)";
+  for (let i = 0; i < 60; i++) {
+    ctx2d.beginPath();
+    ctx2d.ellipse(detRand(i * 3 + 5) * W, groundTop + detRand(i * 7 + 9) * H * 0.17,
+      W * 0.006, H * 0.0022, 0, 0, Math.PI * 2);
+    ctx2d.fill();
+  }
+  ctx2d.strokeStyle = "rgba(255,255,255,.55)"; ctx2d.lineWidth = 3;
+  ctx2d.setLineDash([9, 8]);
+  ctx2d.beginPath(); ctx2d.moveTo(cx, groundTop + 4); ctx2d.lineTo(cx, H * 0.638); ctx2d.stroke();
+  ctx2d.setLineDash([]);
+  for (const dirS of [-1, 1]) { // vạch thắng: dải đỏ viền trắng
+    const wx = cx + dirS * 0.85 * halfSpan;
+    ctx2d.fillStyle = "#c22f2f";
+    ctx2d.fillRect(wx - W * 0.005, groundTop, W * 0.01, H * 0.173);
+    ctx2d.fillStyle = "rgba(255,255,255,.85)";
+    ctx2d.fillRect(wx - W * 0.0075, groundTop, W * 0.0018, H * 0.173);
+    ctx2d.fillRect(wx + W * 0.0057, groundTop, W * 0.0018, H * 0.173);
+  }
+  // --- trống hội trên giá ở mép phải sân (rung theo nhịp khi trống nổi) ---
+  {
+    const dx = W * 0.955, dBase = GY;
+    const dScale = drums ? 1 + 0.045 * Math.sin(now / 90) : 1;
+    ctx2d.save();
+    ctx2d.translate(dx, dBase); ctx2d.scale(dScale, dScale); ctx2d.translate(-dx, -dBase);
+    ctx2d.strokeStyle = "#5e3a17"; ctx2d.lineWidth = 4.5; ctx2d.lineCap = "round";
+    ctx2d.beginPath();
+    ctx2d.moveTo(dx - W * 0.02, dBase); ctx2d.lineTo(dx + W * 0.012, dBase - H * 0.055);
+    ctx2d.moveTo(dx + W * 0.02, dBase); ctx2d.lineTo(dx - W * 0.012, dBase - H * 0.055);
+    ctx2d.stroke();
+    ctx2d.fillStyle = "#c22f2f";
+    ctx2d.beginPath(); ctx2d.roundRect(dx - W * 0.027, dBase - H * 0.098, W * 0.054, H * 0.05, 7); ctx2d.fill();
+    ctx2d.fillStyle = "#f3e3c2";
+    ctx2d.beginPath(); ctx2d.ellipse(dx, dBase - H * 0.098, W * 0.027, H * 0.007, 0, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.fillStyle = "#ffd34d";
+    for (let i = 0; i < 5; i++) {
+      ctx2d.beginPath();
+      ctx2d.arc(dx - W * 0.02 + i * W * 0.01, dBase - H * 0.062, 1.8, 0, Math.PI * 2);
+      ctx2d.fill();
+    }
+    ctx2d.restore();
+  }
+
+  // --- chia mèo theo đội (ưu tiên nhiều cú kéo nhất đứng gần cờ) ---
+  const byTeam = { cam: [], xam: [] };
+  for (const rec of players.values()) {
+    if (rec.data.tug_team === "cam" || rec.data.tug_team === "xam") byTeam[rec.data.tug_team].push(rec);
+  }
+  for (const team of ["cam", "xam"]) {
+    byTeam[team].sort((a, b) => (b.data.tug_pulls || 0) - (a.data.tug_pulls || 0)
+      || (b.data.tug_force || 0) - (a.data.tug_force || 0));
+    byTeam[team] = byTeam[team].slice(0, 5);
+  }
+  const shift = (tugDispPos / 100) * W * 0.02;
+  const catX = (team, i) => cx + (team === "cam" ? -1 : 1) * halfSpan * (0.13 + i * 0.16) + shift;
+  const heaveOf = (team) => {
+    const until = tugFx.heaveUntil[team] || 0;
+    if (now >= until) return 0;
+    return Math.sin((1 - (until - now) / 450) * Math.PI);
+  };
+  const loserTeam = (t && t.phase === "podium" && tugRoundEnd && tugRoundEnd.round === t.round
+    && tugRoundEnd.winner && tugRoundEnd.winner !== "draw")
+    ? (tugRoundEnd.winner === "cam" ? "xam" : "cam") : null;
+
+  // --- dây thừng (vẽ trước mèo, chân mèo vẽ đè lên = nắm dây) ---
+  const ropeY = GY - s * 0.72;
+  const outerX = (team) => byTeam[team].length
+    ? catX(team, byTeam[team].length - 1) + (team === "cam" ? -1 : 1) * s * 0.85
+    : cx + (team === "cam" ? -1 : 1) * halfSpan * 0.97;
+  const jolt = (heaveOf("cam") > 0 || heaveOf("xam") > 0) ? Math.sin(now / 45) * 1.3 : 0;
+  const lx = outerX("cam"), rx = outerX("xam");
+  for (const [lw, col, dash] of [[7.5, "#8a6a34", []], [4.5, "#dcb26a", []], [1.6, "rgba(90,60,20,.45)", [6, 6]]]) {
+    ctx2d.strokeStyle = col; ctx2d.lineWidth = lw; ctx2d.setLineDash(dash);
+    ctx2d.beginPath();
+    ctx2d.moveTo(lx, ropeY);
+    ctx2d.quadraticCurveTo(cx, ropeY + H * 0.004 + jolt, rx, ropeY);
+    ctx2d.stroke();
+  }
+  ctx2d.setLineDash([]);
+  // --- cờ đỏ buộc ở vị trí pos trên dây ---
+  const flagX = cx + (tugDispPos / 100) * halfSpan;
+  ctx2d.strokeStyle = "#7c4f24"; ctx2d.lineWidth = 3.5; ctx2d.lineCap = "round";
+  ctx2d.beginPath(); ctx2d.moveTo(flagX, ropeY - s * 0.52); ctx2d.lineTo(flagX, ropeY + s * 0.16); ctx2d.stroke();
+  ctx2d.fillStyle = "#a33226";
+  ctx2d.beginPath(); ctx2d.arc(flagX, ropeY, s * 0.09, 0, Math.PI * 2); ctx2d.fill();
+  {
+    const fw = s * 0.56, fh = s * 0.32;
+    const wave = Math.sin(now / (drums ? 150 : 300)) * s * 0.055;
+    ctx2d.fillStyle = "#e63946";
+    ctx2d.beginPath();
+    ctx2d.moveTo(flagX, ropeY - s * 0.52);
+    ctx2d.quadraticCurveTo(flagX + fw * 0.55, ropeY - s * 0.52 + wave * 0.5, flagX + fw, ropeY - s * 0.5 + wave);
+    ctx2d.quadraticCurveTo(flagX + fw * 0.55, ropeY - s * 0.3 + wave * 0.5, flagX, ropeY - s * 0.2);
+    ctx2d.closePath(); ctx2d.fill();
+    ctx2d.fillStyle = "#ffd34d";
+    ctx2d.beginPath(); ctx2d.arc(flagX, ropeY - s * 0.56, s * 0.055, 0, Math.PI * 2); ctx2d.fill();
+  }
+
+  // --- 2 đội mèo kéo dây ---
+  for (const team of ["cam", "xam"]) {
+    const list = byTeam[team];
+    if (!list.length) { // đội trống: bóng mèo mờ + lời mời vào đội
+      const gx = catX(team, 1);
+      ctx2d.save();
+      ctx2d.globalAlpha = 0.4;
+      ctx2d.fillStyle = "#170b22";
+      ctx2d.beginPath(); ctx2d.ellipse(gx, GY - s * 0.4, s * 0.55, s * 0.38, 0, 0, Math.PI * 2); ctx2d.fill();
+      ctx2d.beginPath(); ctx2d.arc(gx + (team === "cam" ? 1 : -1) * s * 0.34, GY - s * 0.9, s * 0.35, 0, Math.PI * 2); ctx2d.fill();
+      for (const d2 of [-1, 1]) {
+        ctx2d.beginPath();
+        const ex = gx + (team === "cam" ? 1 : -1) * s * 0.34;
+        ctx2d.moveTo(ex + d2 * s * 0.24, GY - s * 1.12);
+        ctx2d.lineTo(ex + d2 * s * 0.08, GY - s * 1.42);
+        ctx2d.lineTo(ex + d2 * s * 0.36, GY - s * 1.32);
+        ctx2d.closePath(); ctx2d.fill();
+      }
+      ctx2d.restore();
+      ctx2d.font = `700 ${Math.max(11, H * 0.012)}px sans-serif`;
+      ctx2d.fillStyle = "rgba(255,255,255,.85)";
+      ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+      ctx2d.fillText(team === "cam" ? "Chưa có mèo — gõ \"cam\"!" : "Chưa có mèo — gõ \"xám\"!", gx, GY + H * 0.026);
+      continue;
+    }
+    list.forEach((rec, i) => {
+      drawTugCat(catX(team, i), GY, s, rec, now, {
+        dir: team === "cam" ? 1 : -1, team,
+        heave: heaveOf(team), tired: !!rec.data.tired,
+        tumble: loserTeam === team, drums,
+        tagLift: i % 2 ? s * 0.36 : 0,
+      });
+    });
+  }
+
+  // --- Bug trọng tài: ảnh thật khung vàng đứng ở vạch giữa, trước dây ---
+  {
+    const bx = cx, br = H * 0.0235;
+    const bounce = (t && t.phase === "podium") ? Math.abs(Math.sin(now / 170)) * H * 0.009
+      : Math.sin(now / 620) * H * 0.0012;
+    const by = GY + H * 0.055 - bounce;
+    ctx2d.fillStyle = "rgba(40,22,8,.3)";
+    ctx2d.beginPath(); ctx2d.ellipse(bx, GY + H * 0.058, br * 1.25, br * 0.32, 0, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.save();
+    ctx2d.beginPath(); ctx2d.arc(bx, by, br, 0, Math.PI * 2); ctx2d.clip();
+    if (bugPhotoImg && bugPhotoImg.complete && bugPhotoImg.naturalWidth > 0) {
+      ctx2d.drawImage(bugPhotoImg, bx - br, by - br, br * 2, br * 2);
+    } else {
+      ctx2d.fillStyle = "#ffe3b3"; ctx2d.fillRect(bx - br, by - br, br * 2, br * 2);
+      ctx2d.font = `${br * 1.1}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+      ctx2d.fillText("🐱", bx, by);
+    }
+    ctx2d.restore();
+    ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 3;
+    ctx2d.beginPath(); ctx2d.arc(bx, by, br, 0, Math.PI * 2); ctx2d.stroke();
+    ctx2d.font = `600 ${Math.max(11, H * 0.0125)}px sans-serif`;
+    const bugLabel = "Bug ⚖️ trọng tài";
+    const btw = ctx2d.measureText(bugLabel).width + 14;
+    ctx2d.fillStyle = "rgba(43, 20, 8, .9)";
+    ctx2d.beginPath(); ctx2d.roundRect(bx - btw / 2, by + br + H * 0.006, btw, H * 0.019, 8); ctx2d.fill();
+    ctx2d.fillStyle = "#ffd88a"; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText(bugLabel, bx, by + br + H * 0.0155);
+  }
+
+  // --- HUD kéo co ---
+  drawTugHud(now, W, H);
+
+  // --- pháo giấy mừng đội thắng trong pha podium ---
+  if (t && t.phase === "podium" && tugRoundEnd && tugRoundEnd.round === t.round
+    && tugRoundEnd.winner && tugRoundEnd.winner !== "draw") {
+    const cols = tugRoundEnd.winner === "cam" ? ["#ff9f1a", "#ffd23f", "#fff3b0"] : ["#d7dde3", "#7fb2e0", "#ffffff"];
+    if (tugFx.confetti.length < 80 && Math.random() < 0.5) {
+      const half = tugRoundEnd.winner === "cam" ? [0.02, 0.48] : [0.52, 0.98];
+      tugFx.confetti.push({
+        x: W * (half[0] + Math.random() * (half[1] - half[0])), y: -H * 0.01,
+        vx: (Math.random() - 0.5) * W * 0.02, vy: H * (0.05 + Math.random() * 0.05),
+        rot: Math.random() * 6.3, vr: (Math.random() - 0.5) * 6,
+        col: cols[Math.floor(Math.random() * cols.length)], t0: now,
+      });
+    }
+  }
+  tugFx.confetti = tugFx.confetti.filter((c) => c.y < H * 1.02);
+  for (const c of tugFx.confetti) {
+    c.x += c.vx * dt + Math.sin(now / 300 + c.rot) * W * 0.008 * dt;
+    c.y += c.vy * dt;
+    c.rot += c.vr * dt;
+    ctx2d.save();
+    ctx2d.translate(c.x, c.y); ctx2d.rotate(c.rot);
+    ctx2d.fillStyle = c.col;
+    ctx2d.fillRect(-W * 0.006, -H * 0.0035, W * 0.012, H * 0.007);
+    ctx2d.restore();
+  }
+  // chớp sáng phủ màn hình khi Siêu Giật
+  if (now < tugFx.flashUntil) {
+    ctx2d.fillStyle = `rgba(255, 180, 60, ${0.24 * Math.max(0, (tugFx.flashUntil - now) / 300)})`;
+    ctx2d.fillRect(-W * 0.02, 0, W * 1.04, H);
+  }
+  ctx2d.restore();
+}
+
 let lastFrame = performance.now();
 function draw(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
@@ -2460,6 +3130,13 @@ function draw(now) {
   // chế độ Đào Vàng PK dùng cảnh riêng hoàn toàn
   if (stageMode === "miner") {
     drawMinerScene(now, W, H, dt);
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  // chế độ Kéo Co dùng cảnh riêng hoàn toàn
+  if (stageMode === "tug") {
+    drawTugScene(now, W, H, dt);
     requestAnimationFrame(draw);
     return;
   }
@@ -2683,6 +3360,14 @@ function handle(msg) {
         meow.play("happy");
         break;
       }
+      if (stageMode === "tug") {
+        // Kéo Co: không cưỡi xe / spotlight / mưa cá — hiệu ứng quà là buff sức
+        // kéo + Siêu Giật, do sự kiện tug_buff / tug_super báo riêng
+        ticker(`🎁 ${msg.player.nickname} tặng ${msg.gift_name}!`);
+        logEvent(`🎁 ${msg.player.nickname} tặng ${msg.gift_name}`);
+        meow.play("happy");
+        break;
+      }
       const d = msg.diamond_count || 1;
       rec.mount = d >= 50 ? "🦖" : d >= 10 ? "🛵" : "🛒";
       rec.mountUntil = performance.now() + 20000;
@@ -2705,6 +3390,12 @@ function handle(msg) {
         // Vườn Mèo: mèo của người follow chuyển vào vườn ở luôn, không có chó đuổi
         ticker(`🌿 ${msg.player.nickname} vừa follow — một bé mèo chuyển vào vườn ở luôn!`);
         logEvent(`🔔 ${msg.player.nickname} follow — mèo vào vườn`);
+        meow.play("happy");
+        break;
+      }
+      if (stageMode === "tug") {
+        // Kéo Co: không có chó đuổi — follow được sắp vào đội ít người hơn
+        // và cộng tinh thần, do sự kiện tug_follow báo riêng ngay sau đây
         meow.play("happy");
         break;
       }
@@ -2820,6 +3511,58 @@ function handle(msg) {
       ticker(`🌟 MÓC VÀNG! Đội ${MINER_TEAM_NAMES[msg.team]} chĩa thẳng ${MINER_KIND_NAMES[msg.kind] || "vàng to"}!`);
       logEvent(`🌟 Móc Vàng — Đội ${MINER_TEAM_NAMES[msg.team]}`, true);
       meow.play("excited");
+      break;
+    case "tug_join":
+      if (msg.player) upsertPlayer(msg.player);
+      ticker(`🪢 ${msg.name} vào Đội ${TUG_TEAM_NAMES[msg.team] || msg.team}! Gõ "kéo" để kéo dây nha`);
+      logEvent(`🪢 ${msg.name} vào Đội ${TUG_TEAM_NAMES[msg.team] || msg.team}`);
+      break;
+    case "tug_pull":
+      // chỉ làm hiệu ứng gồng kéo — không ticker/log để khỏi ngập sự kiện
+      tugFx.heaveUntil[msg.team] = performance.now() + 450;
+      break;
+    case "tug_cheer": {
+      const nowCh = performance.now();
+      tugFx.heaveUntil[msg.team] = Math.max(tugFx.heaveUntil[msg.team] || 0, nowCh + 300);
+      if (nowCh - (tugFx.cheerBubbleAt[msg.team] || 0) >= 2000) {
+        tugFx.cheerBubbleAt[msg.team] = nowCh;
+        const mates = [...players.values()].filter((r) => r.data.tug_team === msg.team);
+        if (mates.length) setBubble(mates[Math.floor(Math.random() * mates.length)], "HÒ DÔ! 📣", 1600);
+      }
+      ticker(`📣 ${msg.name} hò lấy sức cho Đội ${TUG_TEAM_NAMES[msg.team] || msg.team}!`);
+      logEvent(`📣 ${msg.name} hò — Đội ${TUG_TEAM_NAMES[msg.team] || msg.team}`);
+      break;
+    }
+    case "tug_drums":
+      ticker("🥁 TRỐNG HỘI NỔI LÊN! Cả hai đội kéo mạnh hẳn — HÒ DÔ TA!");
+      logEvent("🥁 Trống hội — cả hai đội tăng sức!", true);
+      meow.play("chorus");
+      break;
+    case "tug_follow":
+      ticker(`🔔 ${msg.name} follow — vào Đội ${TUG_TEAM_NAMES[msg.team] || msg.team}, đội thêm tinh thần!`);
+      logEvent(`🔔 ${msg.name} follow (Đội ${TUG_TEAM_NAMES[msg.team] || msg.team})`);
+      break;
+    case "tug_buff":
+      ticker(`⚡ Đội ${TUG_TEAM_NAMES[msg.team] || msg.team} được tăng sức kéo ×${msg.mult} nhờ quà của ${msg.name}!`);
+      logEvent(`⚡ Buff sức ×${msg.mult} cho Đội ${TUG_TEAM_NAMES[msg.team] || msg.team}`);
+      break;
+    case "tug_super": {
+      const nowS = performance.now();
+      tugFx.shakeUntil = nowS + 250;
+      tugFx.flashUntil = nowS + 300;
+      tugFx.heaveUntil[msg.team] = nowS + 600;
+      ticker(`💥 SIÊU GIẬT! Đội ${TUG_TEAM_NAMES[msg.team] || msg.team} giật cờ một đoạn dài nhờ quà của ${msg.name}!`);
+      logEvent(`💥 Siêu Giật — Đội ${TUG_TEAM_NAMES[msg.team] || msg.team}`, true);
+      meow.play("excited");
+      break;
+    }
+    case "tug_round_end":
+      tugRoundEnd = { ...msg };
+      ticker(msg.winner && msg.winner !== "draw"
+        ? `🏆 Hết hiệp ${msg.round}: Đội ${TUG_TEAM_NAMES[msg.winner]} thắng!`
+        : `🤝 Hiệp ${msg.round} hoà!`);
+      logEvent(`🏆 Hiệp ${msg.round}: ${msg.winner && msg.winner !== "draw" ? `Đội ${TUG_TEAM_NAMES[msg.winner]} thắng` : "Hoà"}${msg.mvp_name ? ` • 💪 ${msg.mvp_name} (${msg.mvp_force} lực)` : ""}`, true);
+      meow.play("chorus");
       break;
     case "share": logEvent(`🔁 ${msg.player.nickname} chia sẻ live`); break;
     case "race_join": ticker(`🏁 ${msg.player.nickname} vào sảnh đua!`); break;

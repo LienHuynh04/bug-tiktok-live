@@ -836,6 +836,201 @@ def run():
     pub = gf.players["fw2"].public()
     assert pub["team"] == "meo" and pub["gold_total"] == 10
 
+    # ================= Kéo Co: 2 đội mèo kéo dây theo hiệp =================
+    from game import OPENING_TUG, IDLE_TUG  # noqa: E402
+
+    gt = GameState(like_goal=10, rng=random.Random(301))
+    gt.set_stage_mode("tug")
+    assert gt.snapshot()["stage_mode"] == "tug"
+    assert gt.opening_line() == OPENING_TUG
+    assert gt.idle_line() == IDLE_TUG
+    assert "tug" not in GameState(rng=random.Random(1)).snapshot()
+
+    # --- vào đội CAM / XÁM; KÉO khi chưa có đội -> tự vào đội ít người hơn ---
+    eff = gt.handle_comment("ta", "Kéo Thủ A", "cam", now=100.0)
+    assert any(e["type"] == "tug_join" and e["team"] == "cam" for e in eff)
+    assert gt.players["ta"].tug_team == "cam"
+    # cam 1 > xám 0 -> người KÉO đầu tiên không đội tự vào XÁM
+    eff = gt.handle_comment("tb", "Kéo Thủ B", "kéo", now=100.1)
+    assert gt.players["tb"].tug_team == "xam"
+    assert any(e["type"] == "tug_join" and e["team"] == "xam" for e in eff)
+    assert any(e["type"] == "tug_pull" for e in eff)
+    # hoà số người (1-1) -> vào CAM
+    gt.handle_comment("tc", "Kéo Thủ C", "kéo", now=100.2)
+    assert gt.players["tc"].tug_team == "cam"
+    # đổi đội được, thành tích cá nhân giữ nguyên
+    gt.players["ta"].tug_force = 33.0
+    gt.handle_comment("ta", "Kéo Thủ A", "đội xám", now=100.3)
+    assert gt.players["ta"].tug_team == "xam" and gt.players["ta"].tug_force == 33.0
+
+    # --- một cú kéo CAM làm dây chạy về phía âm; XÁM thì ngược lại ---
+    def pull_pos(team, text_team):
+        gx = GameState(like_goal=500, rng=random.Random(302))
+        gx.set_stage_mode("tug")
+        gx.handle_comment("p1", "Lực Sĩ", text_team, now=100.0)
+        gx.handle_comment("p1", "Lực Sĩ", "kéo", now=101.0)
+        base_t = time.time()
+        for k in range(1, 13):
+            gx.tick(now_wall=base_t + k * 0.25)
+        return gx.tug_pos
+
+    assert pull_pos("cam", "cam") < -1.5
+    assert pull_pos("xam", "xám") > 1.5
+
+    # --- cooldown KÉO 1.2s: kéo liền bị chặn, qua cooldown mới kéo được ---
+    gc = GameState(like_goal=500, rng=random.Random(303))
+    gc.set_stage_mode("tug")
+    gc.handle_comment("c1", "Spam Thủ", "cam", now=100.0)
+    eff = gc.handle_comment("c1", "Spam Thủ", "kéo", now=101.0)
+    assert any(e["type"] == "tug_pull" for e in eff)
+    eff = gc.handle_comment("c1", "Spam Thủ", "kéo", now=101.5)
+    assert not any(e["type"] == "tug_pull" for e in eff)
+    assert gc.players["c1"].tug_pulls == 1
+    gc.handle_comment("c1", "Spam Thủ", "kéo", now=102.3)
+    assert gc.players["c1"].tug_pulls == 2
+
+    # --- thể lực: mỗi cú kéo -12; dưới 30 kéo yếu (x0.55); tick hồi +4/s ---
+    gs = GameState(like_goal=500, rng=random.Random(304))
+    gs.set_stage_mode("tug")
+    gs.handle_comment("s1", "Sức Bền", "cam", now=100.0)
+    for i in range(6):
+        gs.handle_comment("s1", "Sức Bền", "kéo", now=101.0 + i * 1.3)
+    assert gs.players["s1"].stamina == 28.0
+    assert gs.players["s1"].public()["tired"] is True
+    eff = gs.handle_comment("s1", "Sức Bền", "kéo", now=101.0 + 6 * 1.3)
+    pulls = [e for e in eff if e["type"] == "tug_pull"]
+    assert pulls and pulls[0]["force"] == 5.5   # 10 * 0.55 (khí thế 0, không buff)
+    assert gs.players["s1"].stamina == 16.0
+    base_s = time.time()
+    gs.tick(now_wall=base_s)          # tick đầu dt = 0
+    gs.tick(now_wall=base_s + 5)      # 5s -> hồi 20 thể lực
+    assert gs.players["s1"].stamina == 36.0
+
+    # --- HÒ nạp khí thế (+18, cooldown 3s); khí thế 100 -> lực x1.5 ---
+    gh2 = GameState(like_goal=500, rng=random.Random(305))
+    gh2.set_stage_mode("tug")
+    gh2.handle_comment("h1", "Hò Thủ", "cam", now=100.0)
+    eff = gh2.handle_comment("h1", "Hò Thủ", "hò", now=101.0)
+    cheers = [e for e in eff if e["type"] == "tug_cheer"]
+    assert cheers and cheers[0]["morale"] == 18
+    eff = gh2.handle_comment("h1", "Hò Thủ", "hò dô", now=102.0)
+    assert not any(e["type"] == "tug_cheer" for e in eff)   # đang cooldown
+    assert gh2.tug_morale["cam"] == 18.0
+    gh2.tug_morale["cam"] = 100.0
+    eff = gh2.handle_comment("h1", "Hò Thủ", "kéo", now=103.0)
+    pulls = [e for e in eff if e["type"] == "tug_pull"]
+    assert pulls and pulls[0]["force"] == 15.0  # 10 * (1 + 100/200)
+
+    # --- lội ngược dòng: dây lệch >= 70 chống lại đội mình -> lực x1.25 ---
+    gcb = GameState(like_goal=500, rng=random.Random(306))
+    gcb.set_stage_mode("tug")
+    gcb.handle_comment("cb1", "Ngược Dòng", "cam", now=100.0)
+    gcb.tug_pos = 75.0
+    eff = gcb.handle_comment("cb1", "Ngược Dòng", "kéo", now=101.0)
+    pulls = [e for e in eff if e["type"] == "tug_pull"]
+    assert pulls and pulls[0]["force"] == 12.5
+
+    # --- đoạt cờ ở |pos| >= 85: chốt hiệp ngay, xướng MVP, podium khoá kéo ---
+    gw = GameState(like_goal=500, rng=random.Random(307))
+    gw.set_stage_mode("tug")
+    gw.handle_comment("w1", "Vô Địch", "cam", now=100.0)
+    gw.players["w1"].tug_force_round = 50.0
+    gw._tug_reach["w1"] = time.time() - 5
+    gw.tug_pos = -84.0
+    gw.tug_vel = -30.0
+    base_w = time.time()
+    ends = []
+    for k in range(1, 10):
+        eff = gw.tick(now_wall=base_w + k * 0.25)
+        ends = [e for e in eff if e["type"] == "tug_round_end"]
+        if ends:
+            break
+    assert ends and ends[0]["winner"] == "cam"
+    assert ends[0]["mvp"] == "w1" and ends[0]["mvp_force"] == 50
+    assert "Đoạt cờ" in ends[0]["speak"] and "Lực sĩ của hiệp" in ends[0]["speak"]
+    assert gw.tug_wins["cam"] == 1 and gw.tug_pos == 0.0
+    assert gw.tug_phase == "podium"
+    pulls_before = gw.players["w1"].tug_pulls
+    eff = gw.handle_comment("w1", "Vô Địch", "kéo", now=200.0)
+    assert not any(e["type"] == "tug_pull" for e in eff)
+    assert gw.players["w1"].tug_pulls == pulls_before
+    # podium hết giờ -> hiệp 2
+    gw.tug_deadline = time.time() - 1
+    gw.tick()
+    assert gw.tug_phase == "play" and gw.tug_round == 2
+
+    # --- hết giờ: đội đang dẫn thắng; dây đứng giữa -> hoà ---
+    gt2 = GameState(like_goal=500, rng=random.Random(308))
+    gt2.set_stage_mode("tug")
+    gt2.tug_pos = 30.0
+    gt2.tug_deadline = time.time() - 1
+    eff = gt2.tick()
+    ends = [e for e in eff if e["type"] == "tug_round_end"]
+    assert ends and ends[0]["winner"] == "xam" and gt2.tug_wins["xam"] == 1
+    gt3 = GameState(like_goal=500, rng=random.Random(309))
+    gt3.set_stage_mode("tug")
+    gt3.tug_deadline = time.time() - 1
+    eff = gt3.tick()
+    ends = [e for e in eff if e["type"] == "tug_round_end"]
+    assert ends and ends[0]["winner"] == "draw"
+    assert gt3.tug_wins == {"cam": 0, "xam": 0}
+    assert "hoà" in ends[0]["speak"]
+
+    # --- trống hội ở mốc tim: cả 2 đội x1.5 trong 15s, chu trình tim reset ---
+    gd2 = GameState(like_goal=10, rng=random.Random(310))
+    gd2.set_stage_mode("tug")
+    eff = gd2.handle_like(10)
+    assert any(e["type"] == "tug_drums" for e in eff)
+    assert gd2.likes_since_rain == 0
+    assert gd2.tug_drums_until > time.time()
+    gd2.handle_comment("d1", "Trống Thủ", "xám", now=100.0)
+    eff = gd2.handle_comment("d1", "Trống Thủ", "kéo", now=101.0)
+    pulls = [e for e in eff if e["type"] == "tug_pull"]
+    assert pulls and pulls[0]["force"] == 15.0  # 10 * 1.5 trống hội
+
+    # --- quà: buff lực theo kim cương; quà to -> GIẬT SIÊU CẤP ±12, đoạt cờ được ---
+    gg2 = GameState(like_goal=500, rng=random.Random(311))
+    gg2.set_stage_mode("tug")
+    gg2.handle_comment("g1", "Quà Thủ", "cam", now=100.0)
+    eff = gg2.handle_gift("g1", "Quà Thủ", "Hoa hồng", 5)
+    buffs = [e for e in eff if e["type"] == "tug_buff"]
+    assert buffs and buffs[0]["mult"] == 1.3
+    assert 0 < gg2.tug_buffs["cam"]["until"] - time.time() <= 16
+    gg2.handle_gift("g1", "Quà Thủ", "Xe đồ chơi", 30)
+    assert gg2.tug_buffs["cam"]["mult"] == 1.6
+    eff = gg2.handle_gift("g1", "Quà Thủ", "Sư tử", 150)
+    supers = [e for e in eff if e["type"] == "tug_super"]
+    assert supers and supers[0]["team"] == "cam"
+    assert gg2.tug_pos == -12.0
+    gg2.tug_pos = -78.0
+    eff = gg2.handle_gift("g1", "Quà Thủ", "Sư tử", 150)
+    ends = [e for e in eff if e["type"] == "tug_round_end"]
+    assert ends and ends[0]["winner"] == "cam" and gg2.tug_wins["cam"] == 1
+
+    # --- follow: chưa có đội -> vào đội ít người + khí thế đội +10 ---
+    gfw = GameState(like_goal=500, rng=random.Random(312))
+    gfw.set_stage_mode("tug")
+    gfw.handle_comment("f1", "Xám Follow", "xám", now=100.0)   # xám 1, cam 0
+    eff = gfw.handle_follow("f2", "Khách Kéo")
+    fols = [e for e in eff if e["type"] == "tug_follow"]
+    assert fols and fols[0]["team"] == "cam"
+    assert gfw.players["f2"].tug_team == "cam"
+    assert gfw.tug_morale["cam"] == 10.0
+
+    # --- snapshot kéo co: đủ khoá cho sân khấu dựng hình ---
+    snap = gfw.snapshot()
+    assert {"round", "phase", "time_left", "pos", "wins", "members",
+            "morale", "buffs", "drums_until"} <= set(snap["tug"].keys())
+    assert snap["tug"]["members"] == {"cam": 1, "xam": 1}
+    gfw.handle_comment("f2", "Khách Kéo", "kéo", now=101.0)
+    snap = gfw.snapshot()
+    assert snap["tug_top"][0]["name"] == "Khách Kéo"
+    assert snap["tug_top"][0]["pulls"] == 1 and snap["tug_top"][0]["team"] == "cam"
+    assert snap["tug_top"][0]["force"] > 0
+    pub = gfw.players["f2"].public()
+    assert pub["tug_team"] == "cam" and pub["tug_pulls"] == 1
+    assert pub["stamina"] == 88 and pub["tired"] is False
+
     print("✅ Tất cả test game đều PASS")
 
 
