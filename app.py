@@ -40,18 +40,24 @@ DEFAULT_CONFIG = {
     "like_goal": 500,
     "rain_seconds": 30,
     # Giọng đọc: "edge" = Edge TTS giọng thật (cần internet), "browser" = giọng máy của trình duyệt
+    # Mặc định mới: NAM TRẦM (Nam Minh hạ tông) cho bản cài mới — config.json đã lưu
+    # trên máy chủ kênh vẫn giữ nguyên lựa chọn cũ của họ.
     "tts_engine": "edge",
-    "tts_voice": "vi-VN-HoaiMyNeural",
-    "tts_rate": 5,          # % : -50..+50
-    "tts_pitch": 35,        # Hz: -100..+100 — mặc định preset DỄ THƯƠNG (Hoài My cao giọng)
+    "tts_voice": "vi-VN-NamMinhNeural",
+    "tts_rate": 0,          # % : -50..+50
+    "tts_pitch": -30,       # Hz: -100..+100 — hạ tông cho giọng nam trầm
     "meow_enabled": True,
+    # Nhạc nền sân khấu (Web Audio tổng hợp ở phía stage): bật sẵn, âm lượng 0..100
+    "music_enabled": True,
+    "music_volume": 50,
     # Vbee: giọng Việt 3 miền qua API (cần App ID + Access Token của tài khoản Vbee của chủ kênh;
     # chỉ lưu trong config.json trên máy này — file đóng gói giao đi luôn để trống).
     "vbee_app_id": "",
     "vbee_token": "",
     "vbee_voice": "sg_female_thaotrinh_48k-fhg",  # Thảo Trinh — nữ miền Nam (mã đã xác thực)
     # Chế độ sân khấu: "run" = Chạy cùng Bug (mặc định), "boss" = Đánh Boss Chuột Trùm Răng Sắt,
-    # "garden" = Vườn Mèo của Bug (mỗi người xem một bé mèo, mỗi bé một tính cách)
+    # "garden" = Vườn Mèo của Bug (mỗi người xem một bé mèo, mỗi bé một tính cách),
+    # "miner" = Đào Vàng PK (2 đội Mèo / Chuột móc vàng thi đấu theo hiệp)
     "stage_mode": "run",
     "boss_max_hp": 1000,
     "boss_taunts": True,    # boss chửi lại: thoại châm chọc theo mốc máu / khi bị dội đòn
@@ -59,6 +65,10 @@ DEFAULT_CONFIG = {
     # hoặc khoá một màu: "tu" | "bang" | "luc" | "hoa" | "kim"
     "boss_skin": "auto",
 }
+
+# Mốc lần cuối phát lời chào khi sân khấu (stage) mở kết nối WS trong lúc đang
+# live / demo — chống phát lặp khi stage tải lại trang liên tục (tối đa 1 lần / 30s).
+_stage_greet_at = 0.0
 
 # Preset giọng đặt nhanh ở trang điều khiển
 VOICE_PRESETS = {
@@ -572,6 +582,11 @@ DEMO_GARDEN_COMMENTS = [
     "hạt", "chơi", "xinh quá", "cá", "ngủ", "chơi đi", "hạt",
     "dễ thương quá", "ăn cá", "chơi", "meow", "cá", "hạt", "buồn ngủ",
 ]
+# Bình luận demo riêng cho Đào Vàng PK: vào 2 đội rồi spam ĐÀO là chính
+DEMO_MINER_COMMENTS = [
+    "đào", "đào", "mèo", "đào", "chuột", "đào", "đào", "đào",
+    "mèo", "đào", "chuột", "đào", "hạt", "đào", "đào", "meow",
+]
 
 
 class DemoSimulator:
@@ -639,6 +654,26 @@ class DemoSimulator:
                     else:
                         cmt = self.rng.choice(DEMO_GARDEN_COMMENTS)
                         await self._push(self.game.handle_comment(uid, nick, cmt))
+                elif self.game.stage_mode == "miner":
+                    # Demo Đào Vàng PK: người giả vào 2 đội, ĐÀO liên tục ở nhịp
+                    # ngẫu nhiên, tim chảy đều nạp thanh thuốc nổ, follow/quà thỉnh thoảng
+                    if roll < 0.10:
+                        await self._push(self.game.handle_join(uid, nick))
+                    elif roll < 0.30:
+                        await self._push(self.game.handle_like(self.rng.randint(10, 40)))
+                    elif roll < 0.36:
+                        await self._push(self.game.handle_follow(uid, nick))
+                    elif roll < 0.40:
+                        name, diamonds = self.rng.choice(DEMO_BOSS_GIFTS)
+                        await self._push(self.game.handle_gift(uid, nick, name, diamonds))
+                    else:
+                        cmt = self.rng.choice(DEMO_MINER_COMMENTS)
+                        await self._push(self.game.handle_comment(uid, nick, cmt))
+                        if cmt == "đào":
+                            # Thêm một nhịp ĐÀO nối tiếp của người khác cho mỏ sôi động
+                            await asyncio.sleep(self.rng.uniform(0.2, 0.5))
+                            uid2, nick2 = self.rng.choice(DEMO_USERS)
+                            await self._push(self.game.handle_comment(uid2, nick2, "đào"))
                 elif roll < 0.12:
                     await self._push(self.game.handle_join(uid, nick))
                 elif roll < 0.22:
@@ -731,6 +766,19 @@ def build_app() -> web.Application:
         await ws.send_str(json.dumps({"type": "config", **public_config(load_config()), "app_version": APP_VERSION}, ensure_ascii=False))
         await ws.send_str(json.dumps({"type": "status", **state}, ensure_ascii=False))
         await ws.send_str(json.dumps({"type": "snapshot", **game.snapshot()}, ensure_ascii=False))
+        # Sân khấu vừa mở trong lúc đang live / demo: phát lại lời chào mở màn
+        # (giọng mẫu + câu hướng dẫn theo chế độ) — tối đa 1 lần mỗi 30s.
+        global _stage_greet_at
+        demo_running = demo.task is not None and not demo.task.done()
+        if (state["connected"] or demo_running) \
+                and time.time() - _stage_greet_at >= 30:
+            _stage_greet_at = time.time()
+            if os.path.exists(os.path.join(STATIC, "voice", "chao-mung.mp3")):
+                await hub.broadcast({"type": "welcome_audio",
+                                     "url": "/static/voice/chao-mung.mp3"})
+            await hub.broadcast({"type": "speak",
+                                 "text": game.opening_line(),
+                                 "speak_priority": 1})
         try:
             async for _ in ws:
                 pass
@@ -778,8 +826,15 @@ def build_app() -> web.Application:
             cfg_now["tts_engine"] = "edge"
         if body.get("meow_enabled") is not None:
             cfg_now["meow_enabled"] = bool(body["meow_enabled"])
-        if body.get("stage_mode") in ("run", "boss", "garden"):
+        if body.get("stage_mode") in ("run", "boss", "garden", "miner"):
             cfg_now["stage_mode"] = body["stage_mode"]
+        if body.get("music_enabled") is not None:
+            cfg_now["music_enabled"] = bool(body["music_enabled"])
+        if body.get("music_volume") is not None:
+            try:
+                cfg_now["music_volume"] = max(0, min(100, int(body["music_volume"])))
+            except (TypeError, ValueError):
+                pass
         if body.get("boss_max_hp") is not None:
             try:
                 cfg_now["boss_max_hp"] = max(100, min(100000, int(body["boss_max_hp"])))

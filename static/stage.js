@@ -142,13 +142,179 @@ const meow = {
     this.play("kitten");
   },
 };
-$("ttsEnable").addEventListener("click", () => {
-  tts.enabled = true;
-  meow.unlock();
-  $("ttsEnable").classList.add("hidden");
-  meow.play("happy");
-  tts.push("Giọng đọc đã bật. Chào mừng cả nhà đến với nhà của Bug!", 1);
-});
+/* ================= nhạc nền: giai điệu "đào vàng" tổng hợp bằng Web Audio =================
+   Nhạc gốc soạn trong code (không dùng file / không vay giai điệu game nào):
+   điệu pluck vui nhộn tông C major ~112 BPM — lead triangle + bass square +
+   hat noise. Chạy khi âm thanh đã mở khoá VÀ music_enabled; giọng đọc cất
+   lên thì nhạc tự nhỏ xuống 30% (ducking), đọc xong lại to như cũ. */
+const music = {
+  enabled: true, volume: 50, playing: false, ducked: false,
+  ctx: null, bus: null, timer: null, nextTime: 0, step: 0,
+  STEP_DUR: 60 / 112 / 2, // 1 nốt móc đơn ở 112 BPM
+  // 8 ô nhịp x 8 nốt móc đơn (số MIDI, 0 = nghỉ) — giai điệu gốc vui tươi
+  MELODY: [
+    72, 76, 79, 76, 81, 79, 76, 72, // C
+    74, 79, 74, 79, 83, 79, 74, 71, // G
+    69, 72, 76, 72, 81, 76, 72, 69, // Am
+    77, 81, 77, 81, 79, 76, 74, 72, // F
+    72, 76, 79, 76, 81, 79, 81, 84, // C
+    83, 79, 74, 79, 81, 79, 74, 71, // G
+    77, 81, 84, 81, 79, 76, 74, 71, // F
+    72, 76, 79, 84, 79, 76, 72, 0,  // C
+  ],
+  BASS_ROOTS: [48, 43, 45, 41, 48, 43, 41, 48], // C G Am F C G F C (MIDI)
+  _freq(midi) { return 440 * Math.pow(2, (midi - 69) / 12); },
+  _level() { return (this.volume / 100) * 0.24 * (this.ducked ? 0.3 : 1); },
+  _applyGain() {
+    if (!this.bus || !this.ctx) return;
+    this.bus.gain.setTargetAtTime(this.playing ? this._level() : 0, this.ctx.currentTime, 0.09);
+  },
+  _ensureGraph() {
+    const ctx = this.ctx;
+    if (!ctx || this.bus) return;
+    this.bus = ctx.createGain();
+    this.bus.gain.value = 0;
+    this.bus.connect(ctx.destination);
+    // bộ đệm noise dùng chung cho tiếng hat
+    const len = Math.floor(ctx.sampleRate * 0.06);
+    this._noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = this._noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  },
+  _pluck(midi, t, vol) {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    const flt = ctx.createBiquadFilter();
+    osc.type = "triangle";
+    osc.frequency.value = this._freq(midi);
+    flt.type = "lowpass"; flt.frequency.value = 2600;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + this.STEP_DUR * 0.95);
+    osc.connect(flt); flt.connect(g); g.connect(this.bus);
+    osc.start(t); osc.stop(t + this.STEP_DUR + 0.05);
+  },
+  _bass(midi, t, vol) {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    const flt = ctx.createBiquadFilter();
+    osc.type = "square";
+    osc.frequency.value = this._freq(midi);
+    flt.type = "lowpass"; flt.frequency.value = 480;
+    const dur = this.STEP_DUR * 1.9;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+    g.gain.setValueAtTime(vol, t + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(flt); flt.connect(g); g.connect(this.bus);
+    osc.start(t); osc.stop(t + dur + 0.05);
+  },
+  _hat(t, vol) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass"; bp.frequency.value = 7200; bp.Q.value = 0.8;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    src.connect(bp); bp.connect(g); g.connect(this.bus);
+    src.start(t); src.stop(t + 0.07);
+  },
+  _scheduleStep(step, t) {
+    const mel = this.MELODY[step];
+    if (mel) this._pluck(mel, t, 0.5);
+    const bar = Math.floor(step / 8), inBar = step % 8;
+    if (inBar === 0 || inBar === 4) this._bass(this.BASS_ROOTS[bar], t, 0.30);
+    if (inBar === 6) this._bass(this.BASS_ROOTS[bar] + 7, t, 0.20);
+    if (inBar % 2 === 1) this._hat(t, 0.10);
+    else if (inBar === 0) this._hat(t, 0.05);
+  },
+  start() {
+    if (this.playing || !this.enabled || !audioGate.unlocked) return;
+    const ctx = meow.ctx;
+    if (!ctx || ctx.state !== "running") return;
+    this.ctx = ctx;
+    this._ensureGraph();
+    this.playing = true;
+    this.step = 0;
+    this.nextTime = ctx.currentTime + 0.08;
+    this._applyGain();
+    this.timer = setInterval(() => {
+      if (!this.playing) return;
+      while (this.nextTime < this.ctx.currentTime + 0.28) {
+        this._scheduleStep(this.step, this.nextTime);
+        this.step = (this.step + 1) % this.MELODY.length;
+        this.nextTime += this.STEP_DUR;
+      }
+    }, 90);
+  },
+  stop() {
+    this.playing = false;
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    this._applyGain();
+  },
+  setEnabled(v) {
+    this.enabled = !!v;
+    if (this.enabled) this.start();
+    else this.stop();
+  },
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(100, Number(v) || 0));
+    this._applyGain();
+  },
+};
+// ducking: giọng đọc đang phát thì nhạc lùi về 30%
+setInterval(() => {
+  const d = !!tts.speaking;
+  if (d !== music.ducked) { music.ducked = d; music._applyGain(); }
+}, 150);
+
+/* ================= cổng âm thanh: tự mở khoá, không cần bấm nút =================
+   Trình duyệt chặn autoplay có tiếng cho tới khi có tương tác — nên sân khấu
+   tự thử mở khoá liên tục (load / quay lại tab / mỗi 3s / chạm phím đầu tiên).
+   Mở được là: bật giọng đọc + chạy nhạc nền + ẩn pill cảnh báo mỏng. */
+const audioGate = {
+  unlocked: false,
+  tryUnlock() {
+    meow.unlock();
+    const ctx = meow.ctx;
+    if (!ctx) { this._pill(); return; }
+    ctx.onstatechange = () => { if (ctx.state === "running") this.onUnlocked(); };
+    try {
+      // "tick" buffer im lặng để đánh thức pipeline âm thanh
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch { /* bỏ qua */ }
+    if (ctx.state === "running") this.onUnlocked();
+    else if (ctx.resume) ctx.resume().then(() => { if (ctx.state === "running") this.onUnlocked(); }).catch(() => {});
+    this._pill();
+  },
+  onUnlocked() {
+    if (this.unlocked) return;
+    this.unlocked = true;
+    tts.enabled = true;
+    this._pill();
+    music.start();
+  },
+  _pill() {
+    const pill = $("audioPill");
+    if (pill) pill.classList.toggle("hidden", this.unlocked);
+  },
+};
+window.addEventListener("load", () => audioGate.tryUnlock());
+document.addEventListener("visibilitychange", () => { if (!document.hidden) audioGate.tryUnlock(); });
+document.addEventListener("pointerdown", () => audioGate.tryUnlock());
+document.addEventListener("keydown", () => audioGate.tryUnlock());
+const audioRetryTimer = setInterval(() => {
+  if (audioGate.unlocked) { clearInterval(audioRetryTimer); return; }
+  audioGate.tryUnlock();
+}, 3000);
+audioGate._pill();
 
 /* ================= trạng thái thế giới ================= */
 const players = new Map(); // uid -> {data, img, imgOk, hue, bubble, bubbleUntil, jumpUntil, mount, mountUntil}
@@ -183,16 +349,16 @@ let bossSyncTimer = null;
 const BOSS_BAR_HP = 250;           // mỗi thanh máu trên HUD = 250 HP (khớp game.py)
 
 function setStageMode(mode) {
-  if (mode !== "run" && mode !== "boss" && mode !== "garden") return;
+  if (mode !== "run" && mode !== "boss" && mode !== "garden" && mode !== "miner") return;
   stageMode = mode;
   $("stage").classList.toggle("boss-mode", mode === "boss");
   $("stage").classList.toggle("garden-mode", mode === "garden");
+  $("stage").classList.toggle("miner-mode", mode === "miner");
   // nền boss tối sâu -> panel chuyển kính tối cho khỏi "nổi" lạc tông (chỉ boss)
   $("stage").classList.toggle("boss-dark", mode === "boss");
   // Banner hướng dẫn đổi ngay theo chế độ (không chờ vòng xoay 6s)
   guideIdx = 0;
-  $("guideBanner").textContent =
-    (mode === "boss" ? BOSS_GUIDE_TEXTS : mode === "garden" ? GARDEN_GUIDE_TEXTS : GUIDE_TEXTS)[0];
+  $("guideBanner").textContent = guideTextsFor(mode)[0];
 }
 
 function updateBoss(b) {
@@ -291,8 +457,9 @@ function setBubble(rec, text, ms = 4000) {
 
 /* ================= panel ================= */
 function ticker(text) { if (text) $("ticker").textContent = text; }
-function logEvent(text) {
+function logEvent(text, hl = false) {
   const li = document.createElement("li");
+  if (hl) li.className = "hl";
   li.textContent = text;
   const box = $("eventLog");
   box.prepend(li);
@@ -347,10 +514,97 @@ function updateGarden(s) {
     : `<li><span class="rname">Chưa có tim nào — thả tim nha!</span></li>`;
 }
 
+/* ================= chế độ Đào Vàng PK ================= */
+let minerState = null;             // snapshot "miner" mới nhất từ server
+let minerRoundEnd = null;          // sự kiện miner_round_end gần nhất (cho banner podium)
+const MINER_TEAM_NAMES = { meo: "Mèo", chuot: "Chuột" };
+const MINER_KIND_NAMES = {
+  gold_s: "vàng nhỏ", gold_m: "vàng vừa", gold_l: "VÀNG TO", diamond: "KIM CƯƠNG",
+  rock: "cục đá", bag: "TÚI VÀNG", bone: "cục xương",
+};
+// bán kính vật phẩm (khớp MINER_ITEMS ở game.py) — để vẽ vật đang được kéo ở đầu móc
+const MINER_KIND_R = { gold_s: 0.028, gold_m: 0.042, gold_l: 0.060, diamond: 0.034, rock: 0.040, bag: 0.036, bone: 0.030 };
+const MINER_PIVOTS = { meo: { x: 0.20, y: 0.145 }, chuot: { x: 0.80, y: 0.145 } }; // khớp MINER_PIVOTS
+const MINER_REACH = 0.825; // khớp MINER_HOOK_REACH ở game.py
+const minerFx = {
+  floats: [],       // {team, val, t0} số "+vàng" bay lên ở giàn tời khi giật trúng
+  bursts: [],       // {x, y, ang, spd, t0} tia lửa ở đầu móc khi móc chạm vật
+  rocks: [],        // {x, y, vx, vy, rot, vr, t0} đá văng khi nổ mìn
+  confetti: [],     // {x, y, vx, vy, rot, vr, col, t0} pháo giấy mừng đội thắng hiệp
+  shakeUntil: 0,    // rung màn hình khi nổ mìn
+  flashUntil: 0,    // chớp sáng ấm khi nổ mìn
+  goldenGlow: { meo: false, chuot: false }, // dây móc phát sáng vàng khi Móc Vàng
+};
+
+// Đầu móc theo đúng công thức server: tip = pivot + len * 0.825 * (sin, cos)(góc)
+function minerTipPx(team, W, H) {
+  const piv = MINER_PIVOTS[team];
+  const h = minerState && minerState.hooks ? minerState.hooks[team] : null;
+  const rad = ((h ? h.angle || 0 : 0) * Math.PI) / 180;
+  const reach = (h ? h.len || 0 : 0) * MINER_REACH;
+  return {
+    px: piv.x * W, py: piv.y * H,
+    tx: (piv.x + reach * Math.sin(rad)) * W,
+    ty: (piv.y + reach * Math.cos(rad)) * H,
+  };
+}
+
+function minerHookText(h) {
+  if (!h) return "đang đu…";
+  if (h.state === "drop") return "đang thả móc!";
+  if (h.state === "pull") return h.carrying_kind
+    ? `đang kéo ${MINER_KIND_NAMES[h.carrying_kind] || "vật phẩm"}!`
+    : "đang kéo tay không…";
+  return "đang đu…";
+}
+
+function updateMiner(s) {
+  minerState = s.miner;
+  const m = minerState;
+  if (!m) return;
+  for (const team of ["meo", "chuot"]) {
+    const h = m.hooks ? m.hooks[team] : null;
+    // móc quay lại trạng thái đu = đợt kéo (kể cả Móc Vàng) đã xong -> tắt hào quang
+    if (h && h.state === "swing") minerFx.goldenGlow[team] = false;
+    const buff = m.buffs ? m.buffs[team] : null;
+    const buffTxt = buff && buff.until > Date.now() / 1000 ? ` • ⚡ kéo ×${buff.mult}` : "";
+    $(team === "meo" ? "minerStatusMeo" : "minerStatusChuot").textContent =
+      `${team === "meo" ? "🐱" : "🐭"} Đội ${MINER_TEAM_NAMES[team]}: ${(m.members || {})[team] || 0} thợ • móc ${minerHookText(h)}${buffTxt}`;
+  }
+  const bp = m.blast_progress || { likes: 0, goal: 500 };
+  $("minerBlast").textContent = `💥 Nổ mìn: ${bp.likes} / ${bp.goal}`;
+  $("minerBlastGoal").textContent = bp.goal;
+  $("minerBlastFill").style.width = Math.min(100, (bp.likes / Math.max(1, bp.goal)) * 100) + "%";
+  const top = s.miner_top || [];
+  $("minerTopList").innerHTML = top.length
+    ? top.map((t, i) => `<li><span class="rname">${i + 1}. ${t.team === "chuot" ? "🐭" : "🐱"} ${escapeHtml(t.name)}</span><span class="rkm">${t.gold} 💰</span></li>`).join("")
+    : `<li><span class="rname">Chưa có thợ nào — gõ "mèo"/"chuột" vào đội!</span></li>`;
+  // banner chỉ hiện trong pha nghỉ giữa hiệp (podium)
+  if (m.phase === "podium") {
+    const e = minerRoundEnd;
+    if (e && e.round === m.round) {
+      $("minerBannerTitle").textContent = e.winner
+        ? `🏆 ĐỘI ${MINER_TEAM_NAMES[e.winner].toUpperCase()} THẮNG HIỆP ${e.round}!`
+        : `🤝 HIỆP ${e.round} HOÀ!`;
+      $("minerBannerSub").innerHTML =
+        `Tỉ số hiệp: 🐱 ${e.score_meo} — ${e.score_chuot} 🐭<br>` +
+        (e.mvp_name ? `👑 Vua Đào Vàng: ${escapeHtml(e.mvp_name)} — ${e.mvp_gold} vàng`
+          : "Chưa có ai đào được vàng hiệp này");
+    } else {
+      $("minerBannerTitle").textContent = `⏸️ HẾT HIỆP ${m.round}`;
+      $("minerBannerSub").textContent = "Nghỉ giữa hiệp — hiệp mới sắp bắt đầu!";
+    }
+    $("minerBanner").classList.remove("hidden");
+  } else {
+    $("minerBanner").classList.add("hidden");
+  }
+}
+
 function renderSnapshot(s) {
   if (s.stage_mode) setStageMode(s.stage_mode);
   if (s.boss) updateBoss(s.boss);
   if (s.garden) updateGarden(s);
+  if (s.miner) updateMiner(s);
   if (s.players) {
     s.players.forEach(upsertPlayer);
     rankedPlayers = [...s.players].sort((a, b) => (b.distance_km || 0) - (a.distance_km || 0));
@@ -447,10 +701,21 @@ const GARDEN_GUIDE_TEXTS = [
   "🐟 Gõ \"cá\" — Mê Cá chầu kho cá ngay",
   "❤️ Thả tim gom tim vườn — đủ 500 mở Bữa Tiệc Vườn!",
 ];
+const MINER_GUIDE_TEXTS = [
+  "⛏️ Gõ \"mèo\" hoặc \"chuột\" để vào đội đào vàng!",
+  "🎯 Canh móc quét qua cục vàng to rồi gõ \"đào\"!",
+  "💎 Kim cương 150 vàng — thấy là phải giật ngay!",
+  "❤️ Thả tim đủ là NỔ MÌN phá đá, lộ vàng!",
+  "🏆 Đào nhiều vàng nhất hiệp = Vua Đào Vàng!",
+];
+function guideTextsFor(mode) {
+  return mode === "boss" ? BOSS_GUIDE_TEXTS
+    : mode === "garden" ? GARDEN_GUIDE_TEXTS
+    : mode === "miner" ? MINER_GUIDE_TEXTS : GUIDE_TEXTS;
+}
 let guideIdx = 0;
 setInterval(() => {
-  const arr = stageMode === "boss" ? BOSS_GUIDE_TEXTS
-    : stageMode === "garden" ? GARDEN_GUIDE_TEXTS : GUIDE_TEXTS;
+  const arr = guideTextsFor(stageMode);
   guideIdx = (guideIdx + 1) % arr.length;
   $("guideBanner").textContent = arr[guideIdx];
 }, 6000);
@@ -1681,6 +1946,503 @@ function drawGardenScene(now, W, H, dt) {
   }
 }
 
+/* ================= canvas: cảnh Đào Vàng PK =================
+   Mỏ vàng vẽ hoàn toàn bằng code (nhân vật thợ mỏ là mèo/chuột hoạt hình
+   gốc của kênh — không sao chép nhân vật của game Đào Vàng nào khác):
+   trần hang tím, sàn gỗ với 2 giàn tời, lòng đất tầng lớp, vàng và kim
+   cương phát sáng lấp lánh. Vị trí vật phẩm + góc/độ dài móc lấy thẳng từ
+   snapshot server nên móc khớp đúng vật nó giật trúng. */
+function detRand(seed) { const v = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return v - Math.floor(v); }
+
+function drawSparkle(x, y, size, alpha) {
+  ctx2d.save();
+  ctx2d.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx2d.fillStyle = "#fff7cf";
+  ctx2d.beginPath();
+  ctx2d.moveTo(x, y - size);
+  ctx2d.quadraticCurveTo(x, y, x + size, y);
+  ctx2d.quadraticCurveTo(x, y, x, y + size);
+  ctx2d.quadraticCurveTo(x, y, x - size, y);
+  ctx2d.quadraticCurveTo(x, y, x, y - size);
+  ctx2d.fill();
+  ctx2d.restore();
+}
+
+function drawMinerItem(kind, x, y, r, now, seed) {
+  ctx2d.save();
+  ctx2d.translate(x, y);
+  if (kind === "gold_s" || kind === "gold_m" || kind === "gold_l") {
+    // quầng sáng ấm quanh cục vàng
+    const glow = ctx2d.createRadialGradient(0, 0, 0, 0, 0, r * 1.9);
+    glow.addColorStop(0, "rgba(255, 200, 60, .30)"); glow.addColorStop(1, "rgba(255, 200, 60, 0)");
+    ctx2d.fillStyle = glow; ctx2d.fillRect(-r * 1.9, -r * 1.9, r * 3.8, r * 3.8);
+    // thân: đa giác khía cạnh (nugget) theo seed để mỗi cục một dáng
+    ctx2d.beginPath();
+    const pts = 8;
+    for (let i = 0; i < pts; i++) {
+      const a = (i / pts) * Math.PI * 2;
+      const rr = r * (0.82 + 0.3 * detRand(seed * 7 + i * 13));
+      const vx = Math.cos(a) * rr, vy = Math.sin(a) * rr * 0.86;
+      if (i) ctx2d.lineTo(vx, vy); else ctx2d.moveTo(vx, vy);
+    }
+    ctx2d.closePath();
+    const g = ctx2d.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.15, 0, 0, r * 1.15);
+    g.addColorStop(0, "#ffe98a"); g.addColorStop(0.55, "#ffc93c"); g.addColorStop(1, "#e08e0b");
+    ctx2d.fillStyle = g; ctx2d.fill();
+    ctx2d.strokeStyle = "rgba(146, 90, 0, .55)"; ctx2d.lineWidth = Math.max(1.5, r * 0.06); ctx2d.stroke();
+    // mặt cắt sáng giả lập mặt phẳng của nugget
+    ctx2d.beginPath();
+    ctx2d.moveTo(-r * 0.45, -r * 0.08); ctx2d.lineTo(0, -r * 0.55); ctx2d.lineTo(r * 0.32, r * 0.02);
+    ctx2d.closePath();
+    ctx2d.fillStyle = "rgba(255, 246, 190, .5)"; ctx2d.fill();
+    // tia lấp lánh nhấp nháy theo (id, thời gian)
+    const tw = 0.5 + 0.5 * Math.sin(now / 280 + seed * 2.7);
+    if (tw > 0.5) drawSparkle(-r * 0.18, -r * 0.3, r * 0.55 * tw, tw);
+  } else if (kind === "diamond") {
+    const glow = ctx2d.createRadialGradient(0, 0, 0, 0, 0, r * 1.8);
+    glow.addColorStop(0, "rgba(127, 231, 255, .35)"); glow.addColorStop(1, "rgba(127, 231, 255, 0)");
+    ctx2d.fillStyle = glow; ctx2d.fillRect(-r * 1.8, -r * 1.8, r * 3.6, r * 3.6);
+    ctx2d.beginPath();
+    ctx2d.moveTo(-r, -r * 0.32); ctx2d.lineTo(-r * 0.55, -r * 0.8); ctx2d.lineTo(r * 0.55, -r * 0.8);
+    ctx2d.lineTo(r, -r * 0.32); ctx2d.lineTo(0, r);
+    ctx2d.closePath();
+    const g = ctx2d.createLinearGradient(0, -r, 0, r);
+    g.addColorStop(0, "#c9f6ff"); g.addColorStop(0.5, "#5fd4f2"); g.addColorStop(1, "#1d8fd1");
+    ctx2d.fillStyle = g; ctx2d.fill();
+    ctx2d.strokeStyle = "rgba(230, 252, 255, .9)"; ctx2d.lineWidth = Math.max(1.2, r * 0.05); ctx2d.stroke();
+    ctx2d.beginPath();
+    ctx2d.moveTo(-r, -r * 0.32); ctx2d.lineTo(r, -r * 0.32);
+    ctx2d.moveTo(-r * 0.55, -r * 0.8); ctx2d.lineTo(0, r);
+    ctx2d.moveTo(r * 0.55, -r * 0.8); ctx2d.lineTo(0, r);
+    ctx2d.stroke();
+    const tw = 0.5 + 0.5 * Math.sin(now / 240 + seed * 3.9);
+    if (tw > 0.45) drawSparkle(r * 0.3, -r * 0.5, r * 0.6 * tw, tw);
+  } else if (kind === "rock") {
+    ctx2d.beginPath();
+    const pts = 7;
+    for (let i = 0; i < pts; i++) {
+      const a = (i / pts) * Math.PI * 2;
+      const rr = r * (0.78 + 0.34 * detRand(seed * 11 + i * 7));
+      const vx = Math.cos(a) * rr, vy = Math.sin(a) * rr * 0.85;
+      if (i) ctx2d.lineTo(vx, vy); else ctx2d.moveTo(vx, vy);
+    }
+    ctx2d.closePath();
+    const g = ctx2d.createRadialGradient(-r * 0.25, -r * 0.3, r * 0.2, 0, 0, r * 1.1);
+    g.addColorStop(0, "#b9bcc4"); g.addColorStop(1, "#6d6f78");
+    ctx2d.fillStyle = g; ctx2d.fill();
+    ctx2d.strokeStyle = "rgba(30, 28, 38, .6)"; ctx2d.lineWidth = Math.max(1.5, r * 0.06); ctx2d.stroke();
+    ctx2d.beginPath();
+    ctx2d.moveTo(-r * 0.4, -r * 0.3); ctx2d.lineTo(0, r * 0.05); ctx2d.lineTo(-r * 0.15, r * 0.45);
+    ctx2d.stroke();
+  } else if (kind === "bag") {
+    // túi bí mật: thân túi nâu buộc miệng + dấu "?"
+    ctx2d.fillStyle = "#8a5a2b";
+    ctx2d.beginPath(); ctx2d.ellipse(0, r * 0.16, r * 0.82, r * 0.78, 0, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.fillStyle = "#6f4525";
+    ctx2d.beginPath();
+    ctx2d.moveTo(-r * 0.3, -r * 0.5); ctx2d.lineTo(r * 0.3, -r * 0.5);
+    ctx2d.lineTo(r * 0.12, -r * 0.92); ctx2d.lineTo(-r * 0.12, -r * 0.92);
+    ctx2d.closePath(); ctx2d.fill();
+    ctx2d.strokeStyle = "#d9a441"; ctx2d.lineWidth = Math.max(2, r * 0.09);
+    ctx2d.beginPath(); ctx2d.moveTo(-r * 0.3, -r * 0.48); ctx2d.lineTo(r * 0.3, -r * 0.48); ctx2d.stroke();
+    ctx2d.fillStyle = "#ffe9a8";
+    ctx2d.font = `900 ${r * 1.05}px sans-serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("?", 0, r * 0.2);
+  } else if (kind === "bone") {
+    ctx2d.font = `${r * 1.9}px serif`;
+    ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("🦴", 0, 0);
+  }
+  ctx2d.restore();
+}
+
+/* Thợ vận hành giàn tời: trái = mèo cam đội mũ bảo hộ, phải = chuột xám
+   đội mũ (tai tròn, mõm nhọn, đuôi dài) — cả hai đều là hình vẽ gốc. */
+function drawMinerOperator(x, y, s, kind, now, facing) {
+  const isCat = kind === "cat";
+  const coat = isCat
+    ? { base: "#f2a54a", dark: "#d97f26", belly: "#ffe3b3", ear: "#ffb84d" }
+    : { base: "#9aa3ad", dark: "#7c8791", belly: "#d7dde3", ear: "#c3ccd4" };
+  const bobY = Math.sin(now / 480 + (isCat ? 0 : 2.1)) * s * 0.025;
+  ctx2d.save();
+  ctx2d.translate(x, y + bobY);
+  // bóng đất
+  ctx2d.fillStyle = "rgba(20, 10, 0, .3)";
+  ctx2d.beginPath(); ctx2d.ellipse(0, s * 0.46, s * 0.6, s * 0.12, 0, 0, Math.PI * 2); ctx2d.fill();
+  // đuôi: mèo cong lên sau lưng; chuột dài ngoằn ngoèo thả ra sau
+  ctx2d.strokeStyle = isCat ? coat.dark : "#d89a9a";
+  ctx2d.lineWidth = s * (isCat ? 0.11 : 0.07); ctx2d.lineCap = "round";
+  ctx2d.beginPath();
+  if (isCat) {
+    ctx2d.moveTo(-facing * s * 0.45, s * 0.1);
+    ctx2d.quadraticCurveTo(-facing * s * 0.85, -s * 0.05, -facing * s * 0.72, -s * 0.52 + Math.sin(now / 340) * s * 0.06);
+  } else {
+    ctx2d.moveTo(-facing * s * 0.45, s * 0.18);
+    ctx2d.quadraticCurveTo(-facing * s * 0.95, s * 0.3, -facing * s * 1.25, s * 0.12 + Math.sin(now / 300) * s * 0.05);
+  }
+  ctx2d.stroke();
+  // thân
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.ellipse(0, 0, s * 0.56, s * 0.42, 0, 0, Math.PI * 2); ctx2d.fill();
+  if (isCat) { // vằn cam trên lưng
+    ctx2d.save();
+    ctx2d.beginPath(); ctx2d.ellipse(0, 0, s * 0.56, s * 0.42, 0, 0, Math.PI * 2); ctx2d.clip();
+    ctx2d.strokeStyle = coat.dark; ctx2d.lineWidth = s * 0.06;
+    for (let i = -1; i <= 1; i++) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(i * s * 0.24 - s * 0.3, -s * 0.4);
+      ctx2d.quadraticCurveTo(i * s * 0.24 - s * 0.22, -s * 0.1, i * s * 0.24 - s * 0.28, s * 0.12);
+      ctx2d.stroke();
+    }
+    ctx2d.restore();
+  }
+  ctx2d.fillStyle = coat.belly;
+  ctx2d.beginPath(); ctx2d.ellipse(facing * s * 0.1, s * 0.15, s * 0.32, s * 0.21, 0, 0, Math.PI * 2); ctx2d.fill();
+  // đầu
+  const hx = facing * s * 0.3, hy = -s * 0.46, hr = s * 0.34;
+  if (isCat) {
+    ctx2d.fillStyle = coat.ear;
+    for (const dir of [-1, 1]) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(hx + dir * hr * 0.7, hy - hr * 0.45);
+      ctx2d.lineTo(hx + dir * hr * 0.22, hy - hr * 1.1);
+      ctx2d.lineTo(hx + dir * hr * 1.0, hy - hr * 0.82);
+      ctx2d.closePath(); ctx2d.fill();
+    }
+  } else {
+    // tai chuột: 2 vòng tròn to viền hồng
+    for (const dir of [-1, 1]) {
+      ctx2d.fillStyle = coat.base;
+      ctx2d.beginPath(); ctx2d.arc(hx + dir * hr * 0.62, hy - hr * 0.78, hr * 0.42, 0, Math.PI * 2); ctx2d.fill();
+      ctx2d.fillStyle = "#e8a2b4";
+      ctx2d.beginPath(); ctx2d.arc(hx + dir * hr * 0.62, hy - hr * 0.78, hr * 0.24, 0, Math.PI * 2); ctx2d.fill();
+    }
+  }
+  ctx2d.fillStyle = coat.base;
+  ctx2d.beginPath(); ctx2d.arc(hx, hy, hr, 0, Math.PI * 2); ctx2d.fill();
+  if (!isCat) { // mõm nhọn + mũi hồng + râu dài
+    ctx2d.fillStyle = coat.belly;
+    ctx2d.beginPath(); ctx2d.ellipse(hx + facing * hr * 0.72, hy + hr * 0.28, hr * 0.52, hr * 0.34, 0, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.fillStyle = "#ff7d9c";
+    ctx2d.beginPath(); ctx2d.arc(hx + facing * hr * 1.18, hy + hr * 0.22, hr * 0.13, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.strokeStyle = "rgba(58,42,32,.45)"; ctx2d.lineWidth = 1.3;
+    for (const k of [-1, 1]) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(hx + facing * hr * 0.8, hy + hr * 0.3 + k * hr * 0.12);
+      ctx2d.lineTo(hx + facing * hr * 1.45, hy + hr * 0.22 + k * hr * 0.3);
+      ctx2d.stroke();
+    }
+  } else { // mũi mèo nhỏ
+    ctx2d.fillStyle = "#ff7d9c";
+    ctx2d.beginPath();
+    ctx2d.moveTo(hx + facing * hr * 0.28 - hr * 0.1, hy + hr * 0.16);
+    ctx2d.lineTo(hx + facing * hr * 0.28 + hr * 0.1, hy + hr * 0.16);
+    ctx2d.lineTo(hx + facing * hr * 0.28, hy + hr * 0.3);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  // mắt nhìn về phía trục quay
+  ctx2d.fillStyle = "#3a2a20";
+  ctx2d.beginPath(); ctx2d.arc(hx + facing * hr * 0.3, hy - hr * 0.05, hr * 0.1, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.beginPath(); ctx2d.arc(hx - facing * hr * 0.32, hy - hr * 0.05, hr * 0.1, 0, Math.PI * 2); ctx2d.fill();
+  // mũ bảo hộ vàng + đèn pha
+  ctx2d.fillStyle = "#ffd23f";
+  ctx2d.beginPath(); ctx2d.arc(hx, hy - hr * 0.12, hr * 1.02, Math.PI, Math.PI * 2); ctx2d.fill();
+  ctx2d.fillRect(hx - hr * 1.18, hy - hr * 0.16, hr * 2.36, hr * 0.16);
+  const lampGlow = ctx2d.createRadialGradient(hx, hy - hr * 0.55, 0, hx, hy - hr * 0.55, hr * 0.75);
+  lampGlow.addColorStop(0, "rgba(255, 244, 180, .75)"); lampGlow.addColorStop(1, "rgba(255, 244, 180, 0)");
+  ctx2d.fillStyle = lampGlow;
+  ctx2d.beginPath(); ctx2d.arc(hx, hy - hr * 0.55, hr * 0.75, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.fillStyle = "#fff6c9";
+  ctx2d.beginPath(); ctx2d.arc(hx, hy - hr * 0.55, hr * 0.24, 0, Math.PI * 2); ctx2d.fill();
+  ctx2d.strokeStyle = "#d9a441"; ctx2d.lineWidth = 1.6;
+  ctx2d.beginPath(); ctx2d.arc(hx, hy - hr * 0.55, hr * 0.24, 0, Math.PI * 2); ctx2d.stroke();
+  ctx2d.restore();
+}
+
+/* HUD kéo co VS: thanh tỉ lệ vàng 2 đội + huy hiệu hiệp ngay trên canvas */
+function drawMinerHud(now, W, H) {
+  const m = minerState;
+  const sm = m ? m.scores.meo || 0 : 0;
+  const sc = m ? m.scores.chuot || 0 : 0;
+  const frac = sm + sc > 0 ? sm / (sm + sc) : 0.5;
+  const x0 = W * 0.16, x1 = W * 0.84, y = H * 0.058, bh = H * 0.018;
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.roundRect(x0, y, x1 - x0, bh, bh / 2); ctx2d.clip();
+  const gr = ctx2d.createLinearGradient(x0, 0, x1, 0);
+  gr.addColorStop(0, "#ff5a5a"); gr.addColorStop(1, "#b06bff");
+  ctx2d.fillStyle = gr; ctx2d.fillRect(x0, y, x1 - x0, bh);
+  const gl = ctx2d.createLinearGradient(x0, 0, x1, 0);
+  gl.addColorStop(0, "#ffd23f"); gl.addColorStop(1, "#ff9f1a");
+  ctx2d.fillStyle = gl; ctx2d.fillRect(x0, y, (x1 - x0) * frac, bh);
+  ctx2d.fillStyle = "rgba(255,255,255,.35)"; ctx2d.fillRect(x0, y, x1 - x0, bh * 0.38);
+  ctx2d.restore();
+  ctx2d.strokeStyle = "rgba(10, 6, 20, .55)"; ctx2d.lineWidth = 2;
+  ctx2d.beginPath(); ctx2d.roundRect(x0, y, x1 - x0, bh, bh / 2); ctx2d.stroke();
+  // tên đội + điểm nằm trong 2 đầu thanh
+  ctx2d.font = `800 ${H * 0.0145}px sans-serif`;
+  ctx2d.textBaseline = "middle";
+  ctx2d.fillStyle = "#3a2703"; ctx2d.textAlign = "left";
+  ctx2d.fillText(`🐱 MÈO ${sm}`, x0 + 10, y + bh / 2 + 1);
+  ctx2d.fillStyle = "#fff"; ctx2d.textAlign = "right";
+  ctx2d.fillText(`${sc} CHUỘT 🐭`, x1 - 10, y + bh / 2 + 1);
+  // huy hiệu giữa thanh: HIỆP n • thời gian còn lại
+  const badge = !m ? "⛏️ ĐÀO VÀNG PK"
+    : m.phase === "podium" ? `⏸️ NGHỈ • HIỆP ${m.round}`
+    : `HIỆP ${m.round} • ${m.time_left}s`;
+  ctx2d.font = `800 ${H * 0.0155}px sans-serif`;
+  const bw = ctx2d.measureText(badge).width + 30;
+  ctx2d.fillStyle = "rgba(12, 8, 26, .88)";
+  ctx2d.beginPath(); ctx2d.roundRect(W / 2 - bw / 2, y - bh * 0.22, bw, bh * 1.44, 99); ctx2d.fill();
+  ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 1.6;
+  ctx2d.beginPath(); ctx2d.roundRect(W / 2 - bw / 2, y - bh * 0.22, bw, bh * 1.44, 99); ctx2d.stroke();
+  ctx2d.fillStyle = "#ffd88a"; ctx2d.textAlign = "center";
+  ctx2d.fillText(badge, W / 2, y + bh / 2 + 1);
+  // số hiệp đã thắng dưới 2 đầu thanh
+  if (m && (m.wins.meo > 0 || m.wins.chuot > 0)) {
+    ctx2d.font = `700 ${H * 0.0125}px sans-serif`;
+    ctx2d.fillStyle = "#ffd88a"; ctx2d.textAlign = "left";
+    if (m.wins.meo > 0) ctx2d.fillText(`🏆 ×${m.wins.meo}`, x0 + 4, y + bh + H * 0.011);
+    ctx2d.fillStyle = "#ffb3d9"; ctx2d.textAlign = "right";
+    if (m.wins.chuot > 0) ctx2d.fillText(`🏆 ×${m.wins.chuot}`, x1 - 4, y + bh + H * 0.011);
+  }
+  ctx2d.restore();
+}
+
+function drawMinerScene(now, W, H, dt) {
+  const m = minerState;
+  ctx2d.save();
+  // nổ mìn: rung màn hình ~400ms
+  if (now < minerFx.shakeUntil) {
+    const k = Math.max(0, (minerFx.shakeUntil - now) / 400);
+    ctx2d.translate((Math.random() - 0.5) * W * 0.014 * k, (Math.random() - 0.5) * H * 0.009 * k);
+  }
+  // --- lòng đất: gradient nâu theo tầng sâu ---
+  const dirt = ctx2d.createLinearGradient(0, 0, 0, H);
+  dirt.addColorStop(0, "#7a4e26"); dirt.addColorStop(0.35, "#5d3a1c");
+  dirt.addColorStop(0.7, "#452a13"); dirt.addColorStop(1, "#2e1c0c");
+  ctx2d.fillStyle = dirt; ctx2d.fillRect(-W * 0.02, 0, W * 1.04, H);
+  // vỉa đất tối lượn sóng
+  ctx2d.fillStyle = "rgba(0, 0, 0, .12)";
+  for (const fy of [0.38, 0.58, 0.8]) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(0, H * fy);
+    for (let x = 0; x <= W; x += W / 12) {
+      ctx2d.lineTo(x, H * fy + Math.sin(x / W * 5.1 + fy * 20) * H * 0.008);
+    }
+    ctx2d.lineTo(W, H * (fy + 0.05)); ctx2d.lineTo(0, H * (fy + 0.05));
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  // đá ngầm chìm ở 2 mép
+  ctx2d.fillStyle = "rgba(18, 10, 24, .32)";
+  for (const side of [0, 1]) {
+    ctx2d.beginPath();
+    const bx = side ? W : 0;
+    ctx2d.moveTo(bx, H * 0.2);
+    for (let i = 0; i <= 5; i++) {
+      const yy = H * (0.2 + i * 0.16);
+      const off = W * (0.02 + detRand(i * 3 + side * 40) * 0.035);
+      ctx2d.lineTo(bx + (side ? -off : off), yy);
+    }
+    ctx2d.lineTo(bx, H);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  // tinh thể tím mờ trong lòng đất
+  for (let i = 0; i < 7; i++) {
+    const cx = detRand(i * 3 + 1) * W, cy = H * (0.32 + detRand(i * 5 + 2) * 0.55);
+    const cs = H * 0.006 * (0.7 + detRand(i * 7) * 0.7);
+    ctx2d.save();
+    ctx2d.translate(cx, cy); ctx2d.rotate(Math.PI / 4);
+    ctx2d.fillStyle = `rgba(178, 132, 255, ${0.13 + 0.06 * Math.sin(now / 800 + i)})`;
+    ctx2d.fillRect(-cs, -cs, cs * 2, cs * 2);
+    ctx2d.restore();
+  }
+  // --- trần hang tím đen + răng đá ---
+  const ceil = ctx2d.createLinearGradient(0, 0, 0, H * 0.1);
+  ceil.addColorStop(0, "#17102a"); ceil.addColorStop(1, "#2c1e4e");
+  ctx2d.fillStyle = ceil; ctx2d.fillRect(-W * 0.02, 0, W * 1.04, H * 0.1);
+  ctx2d.fillStyle = "#241839";
+  for (let i = 0; i < 12; i++) {
+    const sx = (i / 12) * W + detRand(i * 17) * W * 0.03;
+    const sw = W * (0.02 + detRand(i * 23) * 0.025), sh = H * (0.008 + detRand(i * 29) * 0.012);
+    ctx2d.beginPath();
+    ctx2d.moveTo(sx, H * 0.1); ctx2d.lineTo(sx + sw, H * 0.1); ctx2d.lineTo(sx + sw / 2, H * 0.1 + sh);
+    ctx2d.closePath(); ctx2d.fill();
+  }
+  // --- sàn gỗ: dải ván nơi đặt giàn tời ---
+  const deck = ctx2d.createLinearGradient(0, H * 0.1, 0, H * 0.178);
+  deck.addColorStop(0, "#a9743f"); deck.addColorStop(1, "#7c4f24");
+  ctx2d.fillStyle = deck; ctx2d.fillRect(-W * 0.02, H * 0.1, W * 1.04, H * 0.078);
+  ctx2d.strokeStyle = "rgba(70, 42, 12, .5)"; ctx2d.lineWidth = 2;
+  for (let x = 0; x < W; x += W * 0.0625) {
+    ctx2d.beginPath(); ctx2d.moveTo(x, H * 0.1); ctx2d.lineTo(x, H * 0.178); ctx2d.stroke();
+  }
+  ctx2d.fillStyle = "#5e3a17"; ctx2d.fillRect(-W * 0.02, H * 0.172, W * 1.04, H * 0.007);
+  ctx2d.fillStyle = "rgba(0, 0, 0, .22)"; ctx2d.fillRect(-W * 0.02, H * 0.179, W * 1.04, H * 0.012);
+
+  // --- vật phẩm trên trường mỏ ---
+  if (m) {
+    for (const it of m.items) drawMinerItem(it.kind, it.x * W, it.y * H, it.r * W, now, it.id);
+  }
+
+  // --- Bug chủ mỏ: ảnh thật khung vàng trên bục gỗ giữa 2 giàn ---
+  const bx = W * 0.5, by = H * 0.208, br = H * 0.031;
+  ctx2d.fillStyle = "#8a5a2b";
+  ctx2d.beginPath(); ctx2d.roundRect(bx - br * 1.5, by + br * 0.92, br * 3, H * 0.011, 4); ctx2d.fill();
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.arc(bx, by, br, 0, Math.PI * 2); ctx2d.clip();
+  if (bugPhotoImg && bugPhotoImg.complete && bugPhotoImg.naturalWidth > 0) {
+    ctx2d.drawImage(bugPhotoImg, bx - br, by - br, br * 2, br * 2);
+  } else {
+    ctx2d.fillStyle = "#ffe3b3"; ctx2d.fillRect(bx - br, by - br, br * 2, br * 2);
+    ctx2d.font = `${br * 1.1}px serif`; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+    ctx2d.fillText("🐱", bx, by);
+  }
+  ctx2d.restore();
+  ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 3;
+  ctx2d.beginPath(); ctx2d.arc(bx, by, br, 0, Math.PI * 2); ctx2d.stroke();
+  ctx2d.font = `600 ${Math.max(11, H * 0.0125)}px sans-serif`;
+  const bugLabel = "Bug ⚖️ chủ mỏ";
+  const btw = ctx2d.measureText(bugLabel).width + 14;
+  ctx2d.fillStyle = "rgba(43, 28, 8, .9)";
+  ctx2d.beginPath(); ctx2d.roundRect(bx - btw / 2, by + br + H * 0.013, btw, H * 0.019, 8); ctx2d.fill();
+  ctx2d.fillStyle = "#ffd88a"; ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  ctx2d.fillText(bugLabel, bx, by + br + H * 0.0225);
+
+  // --- 2 giàn tời + thợ + dây móc ---
+  for (const team of ["meo", "chuot"]) {
+    const { px, py, tx, ty } = minerTipPx(team, W, H);
+    const h = m && m.hooks ? m.hooks[team] : null;
+    const facing = team === "meo" ? 1 : -1;
+    // khung gỗ: 2 cột + xà ngang + trục quay (tời)
+    ctx2d.fillStyle = "#8a5a2b";
+    ctx2d.fillRect(px - W * 0.037, H * 0.096, W * 0.011, py - H * 0.096 + H * 0.014);
+    ctx2d.fillRect(px + W * 0.026, H * 0.096, W * 0.011, py - H * 0.096 + H * 0.014);
+    ctx2d.fillStyle = "#a9743f";
+    ctx2d.fillRect(px - W * 0.045, H * 0.092, W * 0.09, H * 0.011);
+    // trục quay: ống gỗ quấn dây
+    ctx2d.fillStyle = "#6f4525";
+    ctx2d.beginPath(); ctx2d.arc(px, py, W * 0.017, 0, Math.PI * 2); ctx2d.fill();
+    ctx2d.strokeStyle = "#d8cfc0"; ctx2d.lineWidth = 2;
+    for (const rr of [0.006, 0.0105, 0.015]) {
+      ctx2d.beginPath(); ctx2d.arc(px, py, W * rr, 0, Math.PI * 2); ctx2d.stroke();
+    }
+    ctx2d.fillStyle = "#3a2a20";
+    ctx2d.beginPath(); ctx2d.arc(px, py, W * 0.004, 0, Math.PI * 2); ctx2d.fill();
+    // thợ vận hành đứng cạnh trục
+    drawMinerOperator(px - facing * W * 0.055, py + H * 0.006, H * 0.05, team === "meo" ? "cat" : "rat", now, facing);
+    // dây móc
+    const buff = m && m.buffs ? m.buffs[team] : null;
+    const buffActive = !!(buff && buff.until > Date.now() / 1000);
+    const golden = minerFx.goldenGlow[team];
+    ctx2d.save();
+    if (golden) {
+      ctx2d.shadowColor = "#ffd34d"; ctx2d.shadowBlur = 15;
+      ctx2d.strokeStyle = "#ffd34d"; ctx2d.lineWidth = 4;
+    } else {
+      ctx2d.strokeStyle = "rgba(232, 232, 238, .92)"; ctx2d.lineWidth = 3;
+    }
+    ctx2d.beginPath(); ctx2d.moveTo(px, py); ctx2d.lineTo(tx, ty); ctx2d.stroke();
+    ctx2d.restore();
+    // buff kéo nhanh: tia vàng chạy dọc dây
+    if (buffActive) {
+      for (let k = 0; k < 4; k++) {
+        const t = (k / 4 + (now / 700) % 0.25) % 1;
+        drawSparkle(px + (tx - px) * t, py + (ty - py) * t, H * 0.008, 0.85);
+      }
+    }
+    // móc sắt ở đầu dây
+    ctx2d.save();
+    ctx2d.translate(tx, ty);
+    ctx2d.strokeStyle = "#cfd6dd"; ctx2d.lineWidth = 3.5; ctx2d.lineCap = "round";
+    ctx2d.beginPath(); ctx2d.moveTo(0, -H * 0.012); ctx2d.lineTo(0, -H * 0.002); ctx2d.stroke();
+    ctx2d.beginPath(); ctx2d.arc(0, H * 0.004, H * 0.0095, Math.PI * 0.15, Math.PI * 1.5); ctx2d.stroke();
+    ctx2d.restore();
+    // vật đang kéo treo ngay dưới móc
+    if (h && h.carrying_kind) {
+      drawMinerItem(h.carrying_kind, tx, ty + H * 0.02, (MINER_KIND_R[h.carrying_kind] || 0.034) * W * 0.85, now, 777);
+    }
+  }
+
+  // --- HUD kéo co ---
+  drawMinerHud(now, W, H);
+
+  // --- pháo giấy mừng đội thắng trong pha podium ---
+  if (m && m.phase === "podium" && minerRoundEnd && minerRoundEnd.round === m.round && minerRoundEnd.winner) {
+    const cols = minerRoundEnd.winner === "meo" ? ["#ffd23f", "#3aa0ff", "#fff3b0"] : ["#ff5a5a", "#b06bff", "#ffd3e0"];
+    if (minerFx.confetti.length < 80 && Math.random() < 0.5) {
+      const half = minerRoundEnd.winner === "meo" ? [0.02, 0.48] : [0.52, 0.98];
+      minerFx.confetti.push({
+        x: W * (half[0] + Math.random() * (half[1] - half[0])), y: -H * 0.01,
+        vx: (Math.random() - 0.5) * W * 0.02, vy: H * (0.05 + Math.random() * 0.05),
+        rot: Math.random() * 6.3, vr: (Math.random() - 0.5) * 6,
+        col: cols[Math.floor(Math.random() * cols.length)], t0: now,
+      });
+    }
+  }
+  minerFx.confetti = minerFx.confetti.filter((c) => c.y < H * 1.02);
+  for (const c of minerFx.confetti) {
+    c.x += c.vx * dt + Math.sin(now / 300 + c.rot) * W * 0.008 * dt;
+    c.y += c.vy * dt;
+    c.rot += c.vr * dt;
+    ctx2d.save();
+    ctx2d.translate(c.x, c.y); ctx2d.rotate(c.rot);
+    ctx2d.fillStyle = c.col;
+    ctx2d.fillRect(-W * 0.006, -H * 0.0035, W * 0.012, H * 0.007);
+    ctx2d.restore();
+  }
+
+  // --- tia lửa khi móc chạm vật (bắn ở đầu móc lúc có sự kiện giật) ---
+  minerFx.bursts = minerFx.bursts.filter((b) => now - b.t0 < 600);
+  for (const b of minerFx.bursts) {
+    const prog = (now - b.t0) / 600;
+    const dist = prog * H * 0.045;
+    drawSparkle(b.x + Math.cos(b.ang) * dist, b.y + Math.sin(b.ang) * dist,
+      H * 0.011 * (1 - prog), 1 - prog);
+  }
+
+  // --- đá văng khi nổ mìn ---
+  minerFx.rocks = minerFx.rocks.filter((r) => now - r.t0 < 950);
+  for (const r of minerFx.rocks) {
+    const age = (now - r.t0) / 1000;
+    const rx = r.x + r.vx * age;
+    const ry = r.y + r.vy * age + 0.5 * H * 0.38 * age * age;
+    ctx2d.save();
+    ctx2d.translate(rx, ry); ctx2d.rotate(r.rot + r.vr * age);
+    ctx2d.globalAlpha = Math.max(0, 1 - age / 0.95);
+    ctx2d.fillStyle = "#7d7f88";
+    ctx2d.beginPath();
+    ctx2d.moveTo(-r.s, -r.s * 0.6); ctx2d.lineTo(r.s * 0.4, -r.s);
+    ctx2d.lineTo(r.s, r.s * 0.3); ctx2d.lineTo(-r.s * 0.3, r.s * 0.8);
+    ctx2d.closePath(); ctx2d.fill();
+    ctx2d.restore();
+  }
+
+  // --- số "+vàng" bay lên ở giàn tời của đội vừa giật trúng ---
+  minerFx.floats = minerFx.floats.filter((f) => now - f.t0 < 1500);
+  ctx2d.textAlign = "center"; ctx2d.textBaseline = "middle";
+  for (const f of minerFx.floats) {
+    const prog = (now - f.t0) / 1500;
+    const piv = MINER_PIVOTS[f.team];
+    const fx = piv.x * W, fy = H * 0.115 - prog * H * 0.05;
+    ctx2d.save();
+    ctx2d.globalAlpha = 1 - prog;
+    ctx2d.font = `900 ${H * 0.021}px sans-serif`;
+    ctx2d.strokeStyle = "rgba(40, 24, 0, .75)"; ctx2d.lineWidth = 4;
+    ctx2d.strokeText(`+${f.val}`, fx, fy);
+    ctx2d.fillStyle = "#ffd34d";
+    ctx2d.fillText(`+${f.val}`, fx, fy);
+    ctx2d.restore();
+  }
+
+  // chớp sáng ấm phủ màn hình khi nổ mìn
+  if (now < minerFx.flashUntil) {
+    ctx2d.fillStyle = `rgba(255, 170, 60, ${0.26 * Math.max(0, (minerFx.flashUntil - now) / 350)})`;
+    ctx2d.fillRect(-W * 0.02, 0, W * 1.04, H);
+  }
+  ctx2d.restore();
+}
+
 let lastFrame = performance.now();
 function draw(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
@@ -1691,6 +2453,13 @@ function draw(now) {
   // chế độ Vườn Mèo dùng cảnh riêng hoàn toàn
   if (stageMode === "garden") {
     drawGardenScene(now, W, H, dt);
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  // chế độ Đào Vàng PK dùng cảnh riêng hoàn toàn
+  if (stageMode === "miner") {
+    drawMinerScene(now, W, H, dt);
     requestAnimationFrame(draw);
     return;
   }
@@ -1820,6 +2589,8 @@ function handle(msg) {
       if (typeof msg.tts_rate === "number") tts.rate = msg.tts_rate;
       if (typeof msg.tts_pitch === "number") tts.pitch = msg.tts_pitch;
       if (typeof msg.meow_enabled === "boolean") meow.enabled = msg.meow_enabled;
+      if (typeof msg.music_enabled === "boolean") music.setEnabled(msg.music_enabled);
+      if (typeof msg.music_volume === "number") music.setVolume(msg.music_volume);
       break;
     case "snapshot": renderSnapshot(msg); break;
     case "welcome_audio": tts.pushFile(msg.url, 1); break;
@@ -1897,6 +2668,14 @@ function handle(msg) {
     case "rain": rain(msg.kind, msg.seconds || 30); ticker("🌧️🐟 MƯA CÁ! Cả nhà hứng cá nào!"); logEvent("🌧️🐟 Mưa cá!"); break;
     case "gift": {
       const rec = upsertPlayer(msg.player);
+      if (stageMode === "miner") {
+        // Đào Vàng PK: không cưỡi xe / spotlight / mưa cá — hiệu ứng quà là
+        // buff kéo + Móc Vàng, do sự kiện miner_buff / miner_golden_grab báo riêng
+        ticker(`🎁 ${msg.player.nickname} tặng ${msg.gift_name}!`);
+        logEvent(`🎁 ${msg.player.nickname} tặng ${msg.gift_name}`);
+        meow.play("happy");
+        break;
+      }
       if (stageMode === "garden") {
         // Vườn Mèo: không cưỡi xe / spotlight — mèo nhận bát đặc biệt, vườn thêm trang trí
         ticker(`🎁 ${msg.player.nickname} tặng ${msg.gift_name} — mèo của bạn nhận bát đặc biệt!`);
@@ -1916,6 +2695,12 @@ function handle(msg) {
     }
     case "follow":
       upsertPlayer(msg.player);
+      if (stageMode === "miner") {
+        // Đào Vàng PK: không có chó đuổi — tin +10 vàng cho đội do sự kiện
+        // miner_follow_bonus báo riêng ngay sau đây
+        meow.play("happy");
+        break;
+      }
       if (stageMode === "garden") {
         // Vườn Mèo: mèo của người follow chuyển vào vườn ở luôn, không có chó đuổi
         ticker(`🌿 ${msg.player.nickname} vừa follow — một bé mèo chuyển vào vườn ở luôn!`);
@@ -1973,6 +2758,68 @@ function handle(msg) {
       break;
     case "garden_treat":
       if (msg.player) upsertPlayer(msg.player);
+      break;
+    case "miner_join":
+      if (msg.player) upsertPlayer(msg.player);
+      ticker(`⛏️ ${msg.name} vào Đội ${MINER_TEAM_NAMES[msg.team] || msg.team}! Gõ "đào" để thả móc nha`);
+      logEvent(`⛏️ ${msg.name} vào Đội ${MINER_TEAM_NAMES[msg.team] || msg.team}`);
+      break;
+    case "miner_drop":
+      ticker(`⛏️ Đội ${MINER_TEAM_NAMES[msg.team] || msg.team} thả móc!`);
+      break;
+    case "miner_grab": {
+      const nowG = performance.now();
+      const tipG = minerTipPx(msg.team, canvas.width, canvas.height);
+      minerFx.floats.push({ team: msg.team, val: msg.value || 0, t0: nowG });
+      for (let i = 0; i < 10; i++) {
+        minerFx.bursts.push({ x: tipG.tx, y: tipG.ty, ang: (i / 10) * Math.PI * 2 + Math.random() * 0.5, t0: nowG });
+      }
+      minerFx.goldenGlow[msg.team] = false; // móc vàng đã kéo về tới nơi
+      ticker(`💰 ${msg.name} giật ${MINER_KIND_NAMES[msg.kind] || "vàng"} +${msg.value} cho Đội ${MINER_TEAM_NAMES[msg.team]}!`);
+      logEvent(`💰 ${msg.name} +${msg.value} (${MINER_KIND_NAMES[msg.kind] || msg.kind})`, (msg.value || 0) >= 60);
+      meow.play((msg.value || 0) >= 60 ? "excited" : "normal");
+      break;
+    }
+    case "miner_blast": {
+      const nowB = performance.now();
+      minerFx.shakeUntil = nowB + 400;
+      minerFx.flashUntil = nowB + 350;
+      for (let i = 0; i < 26; i++) {
+        minerFx.rocks.push({
+          x: canvas.width * (0.12 + Math.random() * 0.76),
+          y: canvas.height * (0.5 + Math.random() * 0.42),
+          vx: (Math.random() - 0.5) * canvas.width * 0.09,
+          vy: -canvas.height * (0.04 + Math.random() * 0.13),
+          rot: Math.random() * 6.3, vr: (Math.random() - 0.5) * 9,
+          s: canvas.height * (0.006 + Math.random() * 0.009), t0: nowB,
+        });
+      }
+      ticker("💥 NỔ MÌN! Đá bay hết, vàng lộ ra rồi — ĐÀO mau!");
+      logEvent("💥 NỔ MÌN phá đá, lộ vàng!", true);
+      meow.play("chorus");
+      break;
+    }
+    case "miner_round_end":
+      minerRoundEnd = { ...msg };
+      ticker(msg.winner
+        ? `🏆 Hết hiệp ${msg.round}: Đội ${MINER_TEAM_NAMES[msg.winner]} thắng ${msg.score_meo}–${msg.score_chuot}!`
+        : `🤝 Hiệp ${msg.round} hoà ${msg.score_meo}–${msg.score_chuot}!`);
+      logEvent(`🏆 Hiệp ${msg.round}: ${msg.winner ? `Đội ${MINER_TEAM_NAMES[msg.winner]} thắng ` : "Hoà "}${msg.score_meo}–${msg.score_chuot}${msg.mvp_name ? ` • 👑 ${msg.mvp_name} (${msg.mvp_gold} vàng)` : ""}`, true);
+      meow.play("chorus");
+      break;
+    case "miner_follow_bonus":
+      ticker(`🔔 ${msg.name} follow — Đội ${MINER_TEAM_NAMES[msg.team]} +10 vàng!`);
+      logEvent(`🔔 ${msg.name} follow (+10 vàng Đội ${MINER_TEAM_NAMES[msg.team]})`);
+      break;
+    case "miner_buff":
+      ticker(`⚡ Đội ${MINER_TEAM_NAMES[msg.team]} được tăng tốc kéo ×${msg.mult} nhờ quà của ${msg.name}!`);
+      logEvent(`⚡ Buff kéo ×${msg.mult} cho Đội ${MINER_TEAM_NAMES[msg.team]}`);
+      break;
+    case "miner_golden_grab":
+      minerFx.goldenGlow[msg.team] = true;
+      ticker(`🌟 MÓC VÀNG! Đội ${MINER_TEAM_NAMES[msg.team]} chĩa thẳng ${MINER_KIND_NAMES[msg.kind] || "vàng to"}!`);
+      logEvent(`🌟 Móc Vàng — Đội ${MINER_TEAM_NAMES[msg.team]}`, true);
+      meow.play("excited");
       break;
     case "share": logEvent(`🔁 ${msg.player.nickname} chia sẻ live`); break;
     case "race_join": ticker(`🏁 ${msg.player.nickname} vào sảnh đua!`); break;

@@ -53,6 +53,56 @@ body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; overflow: 
 #gardenTopList .rname { overflow: hidden; text-overflow: ellipsis; }
 #gardenTopList .rkm { color: #ff8fb3; font-weight: 700; }
 
+/* ---------- chế độ Đào Vàng PK: hoán đổi panel ---------- */
+#titleMiner { display: none; }
+#stage.miner-mode #titleMiner { display: block; }
+#stage.miner-mode #titleRun, #stage.miner-mode #titleBoss, #stage.miner-mode #titleGarden { display: none; }
+#minerBoard, #minerTop { display: none; }
+#stage.miner-mode #minerBoard, #stage.miner-mode #minerTop { display: block; }
+#stage.miner-mode #menuBoard, #stage.miner-mode #rankPanel,
+#stage.miner-mode #bossBoard, #stage.miner-mode #bossRankPanel,
+#stage.miner-mode #gardenBoard, #stage.miner-mode #gardenTop,
+#stage.miner-mode #bossHud { display: none; }
+#stage.miner-mode .run-only { display: none; }
+
+/* ---------- bảng lệnh mỏ vàng (tông nâu đất – vàng kim) ---------- */
+#minerBoard { top: 37.5vh; left: 2.5vw; width: 34%; padding: 0 0 .8vh; overflow: hidden; }
+#minerBoard h2 {
+  background: linear-gradient(90deg, #8a5a2b, #d9a441);
+  font-size: 1.8vh; text-align: center; padding: .65vh 6px; letter-spacing: .03em;
+}
+#minerBoard ul { list-style: none; padding: .6vh 12px 0; font-size: 1.3vh; line-height: 1.52; }
+#minerBoard b { color: #ffd88a; }
+.miner-status { padding: .45vh 12px 0; font-size: 1.28vh; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#minerStatusMeo { color: #ffd88a; }
+#minerStatusChuot { color: #ffb3b3; }
+#minerBlast { padding: .55vh 12px 0; font-size: 1.3vh; font-weight: 700; color: #ffb84d; }
+.miner-blast-bar { margin: .35vh 12px 0; height: .9vh; background: rgba(255,255,255,.16); border-radius: 99px; overflow: hidden; }
+#minerBlastFill { height: 100%; width: 0%; background: linear-gradient(90deg, #ff9f1a, #ff5e3a); transition: width .4s; }
+
+/* ---------- TOP thợ đào (bên phải, tông vàng) ---------- */
+#minerTop { top: 27vh; right: 2.5vw; width: 30%; }
+#minerTop h2 { font-size: 1.75vh; color: #ffd34d; letter-spacing: .04em; }
+#minerTopList { list-style: none; margin-top: .6vh; font-size: 1.5vh; line-height: 1.75; }
+#minerTopList li { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+#minerTopList .rname { overflow: hidden; text-overflow: ellipsis; }
+#minerTopList .rkm { color: #ffd88a; font-weight: 700; }
+
+/* ---------- banner hết hiệp mỏ vàng ---------- */
+#minerBanner {
+  position: absolute; top: 30vh; left: 50%; transform: translateX(-50%);
+  width: 86%; z-index: 30; text-align: center; pointer-events: none;
+  background: rgba(43, 28, 8, .93); color: #fff;
+  border: 3px solid #ffd34d; border-radius: 20px; padding: 1.6vh 18px;
+  box-shadow: 0 10px 40px rgba(30, 18, 0, .6);
+}
+#minerBanner.hidden { display: none; }
+#minerBannerTitle { font-size: 3.2vh; font-weight: 900; color: #ffd34d; letter-spacing: .02em; }
+#minerBannerSub { font-size: 1.8vh; font-weight: 700; margin-top: .6vh; line-height: 1.55; }
+
+/* sự kiện nổi bật trong nhật ký (giật vàng to, móc vàng...) */
+#eventLog li.hl { color: #ffd34d; font-weight: 800; }
+
 /* ---------- bảng lệnh boss (kiểu menuBoard, tông tím – vàng kim) ---------- */
 #bossBoard { top: 37.5vh; left: 2.5vw; width: 34%; padding: 0 0 .8vh; overflow: hidden; }
 #bossBoard h2 {
@@ -230,10 +280,14 @@ footer {
 #rainLayer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 40; }
 .rain-drop { position: absolute; top: -6vh; animation: fall linear forwards; }
 @keyframes fall { to { transform: translateY(112vh) rotate(40deg); } }
-#ttsEnable {
-  position: absolute; right: 2.5vw; bottom: 5.4vh; z-index: 60;
-  background: #ffb84d; color: #241743; border: 0; border-radius: 99px;
-  font-size: 1.55vh; font-weight: 700; padding: 1vh 16px; cursor: pointer;
-  box-shadow: 0 4px 16px rgba(10,20,40,.35);
+/* pill mỏng báo trạng thái tiếng: chỉ hiện khi âm thanh CHƯA được mở khoá
+   (trình duyệt chặn autoplay) — mở được tiếng là tự ẩn ngay */
+#audioPill {
+  position: absolute; right: 2.5vw; bottom: 5.2vh; z-index: 60;
+  background: rgba(15, 18, 32, .78); color: #ffd88a;
+  border: 1px solid rgba(255, 216, 138, .45); border-radius: 99px;
+  font-size: 1.15vh; font-weight: 600; padding: .5vh 12px;
+  box-shadow: 0 3px 10px rgba(10,20,40,.3); pointer-events: none;
+  max-width: 62vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-#ttsEnable.hidden { display: none; }
+#audioPill.hidden { display: none; }

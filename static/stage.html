@@ -14,6 +14,7 @@
     <p id="titleRun">💬 Bình luận để vào đội • Mỗi người là một bé mèo • ❤️ Đủ <span id="likeGoalText">500</span> tim → mưa cá</p>
     <p id="titleBoss">🐭 ĐÁNH BOSS • Gõ CÀO để tấn công • ❤️ Thả tim nạp Nộ → mưa cá trút xuống boss</p>
     <p id="titleGarden">🌿 VƯỜN MÈO • Mỗi mèo một tính cách • Gõ lệnh là mèo phản ứng theo tính cách</p>
+    <p id="titleMiner">⛏️ ĐÀO VÀNG PK • Gõ MÈO/CHUỘT vào đội • ĐÀO để thả móc • ❤️ Đủ tim → NỔ MÌN</p>
   </header>
 
   <aside id="statsPanel" class="panel">
@@ -83,6 +84,20 @@
     </ul>
   </section>
 
+  <section id="minerBoard" class="panel">
+    <h2>⛏️ ĐÀO VÀNG PK</h2>
+    <div class="miner-status" id="minerStatusMeo">🐱 Đội Mèo: 0 thợ • móc đang đu…</div>
+    <div class="miner-status" id="minerStatusChuot">🐭 Đội Chuột: 0 thợ • móc đang đu…</div>
+    <ul>
+      <li>🐱 <b>"mèo"</b> / 🐭 <b>"chuột"</b>: vào đội</li>
+      <li>⛏️ <b>"đào"</b>: thả móc đội mình</li>
+      <li>❤️ Thả tim đủ <b id="minerBlastGoal">500</b>: NỔ MÌN phá đá, lộ vàng</li>
+      <li>🎁 Quà tới: đội được tăng tốc kéo — quà to có Móc Vàng</li>
+    </ul>
+    <div id="minerBlast">💥 Nổ mìn: 0 / 500</div>
+    <div class="miner-blast-bar"><div id="minerBlastFill"></div></div>
+  </section>
+
   <div id="bossHud">
     <div id="bossChip">🐭 <span id="bossName">CHUỘT TRÙM RĂNG SẮT</span> — Vòng <span id="bossRound">1</span></div>
     <div class="boss-hp-bar"><div id="bossHpFill"></div><span id="bossHpText">1000 / 1000</span></div>
@@ -112,6 +127,16 @@
     <ol id="gardenTopList"></ol>
   </aside>
 
+  <aside id="minerTop" class="panel">
+    <h2>🏆 TOP THỢ ĐÀO</h2>
+    <ol id="minerTopList"></ol>
+  </aside>
+
+  <div id="minerBanner" class="hidden">
+    <div id="minerBannerTitle">🏆 HẾT HIỆP!</div>
+    <div id="minerBannerSub"></div>
+  </div>
+
   <div id="bossBanner" class="hidden">
     <div id="bossBannerTitle">🎉 HẠ GỤC RĂNG SẮT!</div>
     <div id="bossBannerSub"></div>
@@ -123,7 +148,7 @@
   <footer><div id="ticker">Chào mừng cả nhà đến với nhà của Bug! 🐾</div></footer>
 
   <div id="rainLayer"></div>
-  <button id="ttsEnable">🔊 Bấm vào đây để bật giọng đọc + tiếng mèo kêu</button>
+  <div id="audioPill">🔇 Chạm 1 lần vào sân khấu để mở tiếng (trình duyệt yêu cầu)</div>
 </div>
 <script src="/static/bug-photo.js"></script>
 <script src="/static/boss-art.js"></script>

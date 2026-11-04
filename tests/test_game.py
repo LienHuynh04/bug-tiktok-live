@@ -614,6 +614,228 @@ def run():
     assert gsc.players["sc2"].state == "hide"
     assert gsc.players["sc2"].happiness == hap_before - 5
 
+    # ================= Đào Vàng PK: 2 đội móc vàng theo hiệp =================
+    from game import OPENING_MINER, IDLE_MINER  # noqa: E402
+    import math as _math  # noqa: E402
+
+    gm = GameState(like_goal=10, rng=random.Random(201))
+    gm.set_stage_mode("miner")
+    assert gm.snapshot()["stage_mode"] == "miner"
+    assert gm.opening_line() == OPENING_MINER
+    assert gm.idle_line() == IDLE_MINER
+    assert "miner" not in GameState(rng=random.Random(1)).snapshot()
+
+    # --- vào đội bằng MÈO / CHUỘT; đổi đội giữ nguyên vàng cá nhân ---
+    eff = gm.handle_comment("mm1", "Mèo Một", "mèo", now=100.0)
+    assert any(e["type"] == "miner_join" and e["team"] == "meo" for e in eff)
+    assert gm.players["mm1"].team == "meo"
+    gm.handle_comment("mc1", "Chuột Một", "chuột", now=100.1)
+    gm.handle_comment("mc2", "Chuột Hai", "đội chuột", now=100.2)
+    assert gm.players["mc2"].team == "chuot"
+    gm.players["mm1"].gold_total = 50
+    gm.handle_comment("mm1", "Mèo Một", "đội chuột", now=100.3)
+    assert gm.players["mm1"].team == "chuot" and gm.players["mm1"].gold_total == 50
+
+    # --- ĐÀO khi chưa có đội: tự vào đội ít người hơn trước (mèo 0 < chuột 3) ---
+    eff = gm.handle_comment("mx1", "Khách Đào", "đào", now=101.0)
+    assert gm.players["mx1"].team == "meo"
+    assert any(e["type"] == "miner_join" and e["team"] == "meo" for e in eff)
+    assert gm.miner_hooks["meo"]["state"] == "drop"
+    assert gm.miner_hooks["meo"]["caller"] == "mx1"
+    # móc đang bận: người khác trong đội ĐÀO nữa cũng bị bỏ qua lặng lẽ
+    gm.handle_comment("mm2", "Mèo Hai", "mèo", now=101.2)
+    gm.handle_comment("mm2", "Mèo Hai", "đào", now=103.0)
+    assert gm.miner_hooks["meo"]["caller"] == "mx1"
+
+    # --- chu trình móc: thả -> giật trúng -> cộng vàng người thả + đội ---
+    gd = GameState(like_goal=500, rng=random.Random(202))
+    gd.set_stage_mode("miner")
+    gd.handle_comment("dg1", "Thợ Đào", "mèo", now=100.0)
+    gd.miner_items = [{"id": 999, "kind": "gold_s", "x": 0.20, "y": 0.60,
+                       "r": 0.028, "value": 10, "weight": 1}]
+    hook = gd.miner_hooks["meo"]
+    hook["angle"] = 0.0
+    gd.handle_comment("dg1", "Thợ Đào", "đào", now=101.0)
+    assert hook["state"] == "drop"
+    base = time.time()
+    grab = None
+    for k in range(1, 60):
+        eff = gd.tick(now_wall=base + k * 0.25)
+        hits = [e for e in eff if e["type"] == "miner_grab"]
+        if hits:
+            grab = hits[0]
+            break
+    assert grab and grab["kind"] == "gold_s" and grab["value"] == 10
+    assert grab["team"] == "meo" and grab["user"] == "dg1"
+    assert gd.players["dg1"].gold_round == 10 and gd.players["dg1"].gold_total == 10
+    assert gd.miner_score["meo"] == 10
+    assert hook["state"] == "swing" and hook["carrying"] is None
+    assert len(gd.miner_respawn_due) == 1   # vật đã giật hẹn giờ hồi lại trên mỏ
+
+    # giật VÀNG TO (>= 60): có câu đọc giật vàng cho đội
+    gd.miner_items = [{"id": 1000, "kind": "gold_l", "x": 0.20, "y": 0.60,
+                       "r": 0.06, "value": 60, "weight": 4}]
+    hook["angle"] = 0.0
+    gd.handle_comment("dg1", "Thợ Đào", "đào", now=105.0)
+    grab2 = None
+    for k in range(1, 60):
+        eff = gd.tick(now_wall=base + 30 + k * 0.25)
+        hits = [e for e in eff if e["type"] == "miner_grab"]
+        if hits:
+            grab2 = hits[0]
+            break
+    assert grab2 and grab2["value"] == 60
+    assert grab2.get("speak") and "VÀNG TO" in grab2["speak"]
+    assert gd.miner_score["meo"] == 70
+
+    # --- kéo tay không: không cộng vàng cho ai ---
+    ge = GameState(like_goal=500, rng=random.Random(203))
+    ge.set_stage_mode("miner")
+    ge.handle_comment("eg1", "Tay Không", "chuột", now=100.0)
+    ge.miner_items = []
+    hook_e = ge.miner_hooks["chuot"]
+    hook_e["angle"] = 0.0
+    ge.handle_comment("eg1", "Tay Không", "đào", now=101.0)
+    saw_grab = False
+    for k in range(1, 60):
+        eff = ge.tick(now_wall=base + k * 0.25)
+        saw_grab = saw_grab or any(e["type"] == "miner_grab" for e in eff)
+        if hook_e["state"] == "swing" and k > 2:
+            break
+    assert not saw_grab and ge.players["eg1"].gold_total == 0
+    assert ge.miner_score["chuot"] == 0
+
+    # --- kéo nặng chậm hơn: đá (nặng 5) lâu về hơn vàng nhỏ (nặng 1) ---
+    def pull_ticks(kind, value, weight):
+        gx = GameState(like_goal=500, rng=random.Random(204))
+        gx.set_stage_mode("miner")
+        gx.handle_comment("px1", "Thợ Kéo", "mèo", now=100.0)
+        gx.miner_items = [{"id": 1, "kind": kind, "x": 0.20, "y": 0.60,
+                           "r": 0.04, "value": value, "weight": weight}]
+        hk = gx.miner_hooks["meo"]
+        hk["angle"] = 0.0
+        gx.handle_comment("px1", "Thợ Kéo", "đào", now=101.0)
+        for k in range(1, 120):
+            gx.tick(now_wall=base + k * 0.25)
+            if hk["state"] == "swing" and gx.players["px1"].gold_total > 0:
+                return k
+        return 999
+
+    t_rock = pull_ticks("rock", 5, 5)
+    t_gold = pull_ticks("gold_s", 10, 1)
+    assert t_rock > t_gold, (t_rock, t_gold)
+
+    # --- NỔ MÌN ở mốc tim: đá bay hết, vàng mới lộ ra, chu trình tim reset ---
+    gb2 = GameState(like_goal=10, rng=random.Random(205))
+    gb2.set_stage_mode("miner")
+    gb2.miner_items = [
+        {"id": 1, "kind": "rock", "x": 0.3, "y": 0.5, "r": 0.04, "value": 5, "weight": 5},
+        {"id": 2, "kind": "rock", "x": 0.6, "y": 0.6, "r": 0.04, "value": 5, "weight": 5},
+        {"id": 3, "kind": "gold_s", "x": 0.5, "y": 0.4, "r": 0.028, "value": 10, "weight": 1},
+    ]
+    eff = gb2.handle_like(10)
+    assert any(e["type"] == "miner_blast" for e in eff)
+    assert gb2.likes_since_rain == 0
+    assert all(it["kind"] != "rock" for it in gb2.miner_items)
+    assert len(gb2.miner_items) >= 5
+    assert sum(1 for it in gb2.miner_items if it["kind"] in ("gold_m", "gold_l")) >= 4
+
+    # --- hết hiệp: chốt đội thắng + MVP (hoà vàng -> ai chạm mốc trước) + reset ---
+    gr = GameState(like_goal=500, rng=random.Random(206))
+    gr.set_stage_mode("miner")
+    gr.handle_join("ra", "Đào Thủ A")
+    gr.handle_join("rb", "Đào Thủ B")
+    gr.handle_comment("ra", "Đào Thủ A", "mèo", now=100.0)
+    gr.handle_comment("rb", "Đào Thủ B", "chuột", now=100.1)
+    gr.miner_score["meo"] = 120
+    gr.miner_score["chuot"] = 80
+    gr.players["ra"].gold_round = 70
+    gr.players["rb"].gold_round = 70
+    gr._miner_reach["ra"] = time.time() - 10   # A chạm mốc 70 trước B
+    gr._miner_reach["rb"] = time.time() - 5
+    gr.miner_deadline = time.time() - 1
+    eff = gr.tick()
+    ends = [e for e in eff if e["type"] == "miner_round_end"]
+    assert ends and ends[0]["winner"] == "meo"
+    assert ends[0]["score_meo"] == 120 and ends[0]["score_chuot"] == 80
+    assert ends[0]["mvp"] == "ra" and ends[0]["mvp_gold"] == 70
+    assert "Vua Đào Vàng" in ends[0]["speak"]
+    assert gr.miner_wins["meo"] == 1 and gr.miner_wins["chuot"] == 0
+    assert gr.miner_score == {"meo": 0, "chuot": 0}
+    assert gr.players["ra"].gold_round == 0
+    assert gr.miner_phase == "podium"
+    # podium: móc bị khoá, ĐÀO bị bỏ qua
+    gr.handle_comment("ra", "Đào Thủ A", "đào", now=200.0)
+    assert gr.miner_hooks["meo"]["state"] == "swing"
+    # podium hết giờ -> hiệp 2 bắt đầu
+    gr.miner_deadline = time.time() - 1
+    gr.tick()
+    assert gr.miner_phase == "play" and gr.miner_round == 2
+
+    # hiệp hoà: winner None, không MVP, thoại có chữ "hoà"
+    gh = GameState(like_goal=500, rng=random.Random(207))
+    gh.set_stage_mode("miner")
+    gh.miner_score["meo"] = 50
+    gh.miner_score["chuot"] = 50
+    gh.miner_deadline = time.time() - 1
+    eff = gh.tick()
+    ends = [e for e in eff if e["type"] == "miner_round_end"]
+    assert ends and ends[0]["winner"] is None and ends[0]["mvp"] is None
+    assert "hoà" in ends[0]["speak"]
+
+    # --- quà: buff tốc độ kéo theo kim cương; quà to -> MÓC VÀNG chĩa cục to nhất ---
+    gg = GameState(like_goal=500, rng=random.Random(208))
+    gg.set_stage_mode("miner")
+    gg.handle_comment("gf1", "Thợ Quà", "mèo", now=100.0)
+    eff = gg.handle_gift("gf1", "Thợ Quà", "Hoa hồng", 5)
+    buffs = [e for e in eff if e["type"] == "miner_buff"]
+    assert buffs and buffs[0]["mult"] == 1.3
+    assert 0 < gg.miner_buffs["meo"]["until"] - time.time() <= 16
+    gg.handle_gift("gf1", "Thợ Quà", "Xe đồ chơi", 30)
+    assert gg.miner_buffs["meo"]["mult"] == 1.6
+    assert 25 < gg.miner_buffs["meo"]["until"] - time.time() <= 31
+    gg.miner_items = [
+        {"id": 1, "kind": "gold_s", "x": 0.30, "y": 0.50, "r": 0.028, "value": 10, "weight": 1},
+        {"id": 2, "kind": "diamond", "x": 0.35, "y": 0.80, "r": 0.034, "value": 150, "weight": 2},
+    ]
+    hook_g = gg.miner_hooks["meo"]
+    assert hook_g["state"] == "swing"
+    eff = gg.handle_gift("gf1", "Thợ Quà", "Sư tử", 150)
+    grabs = [e for e in eff if e["type"] == "miner_golden_grab"]
+    assert grabs and grabs[0]["kind"] == "diamond" and grabs[0]["team"] == "meo"
+    assert hook_g["state"] == "drop" and hook_g["golden"] is True
+    expected = _math.degrees(_math.atan2(0.35 - 0.20, 0.80 - 0.145))
+    assert abs(hook_g["angle"] - expected) < 0.6
+    # móc đang bận: quà to rơi về buff x1.6 / 30s
+    eff = gg.handle_gift("gf1", "Thợ Quà", "Sư tử", 150)
+    assert any(e["type"] == "miner_buff" and e["mult"] == 1.6 for e in eff)
+
+    # --- follow: chưa có đội -> vào đội ít người hơn + 10 vàng cho đội đó ---
+    gf = GameState(like_goal=500, rng=random.Random(209))
+    gf.set_stage_mode("miner")
+    gf.handle_comment("fw1", "Chuột Follow", "chuột", now=100.0)   # chuột 1, mèo 0
+    eff = gf.handle_follow("fw2", "Khách Follow")
+    bonus = [e for e in eff if e["type"] == "miner_follow_bonus"]
+    assert bonus and bonus[0]["team"] == "meo" and bonus[0]["value"] == 10
+    assert gf.players["fw2"].team == "meo"
+    assert gf.players["fw2"].gold_round == 10 and gf.players["fw2"].gold_total == 10
+    assert gf.miner_score["meo"] == 10
+
+    # --- snapshot mỏ: đủ khoá cho sân khấu dựng hình ---
+    snap = gf.snapshot()
+    assert {"round", "phase", "time_left", "wins", "scores", "members",
+            "hooks", "items", "blast_progress", "buffs"} <= set(snap["miner"].keys())
+    assert set(snap["miner"]["hooks"].keys()) == {"meo", "chuot"}
+    assert {"angle", "len", "state", "carrying_kind"} <= set(
+        snap["miner"]["hooks"]["meo"].keys())
+    assert snap["miner"]["items"] and set(snap["miner"]["items"][0].keys()) == {
+        "id", "x", "y", "kind", "r"}
+    assert snap["miner"]["blast_progress"] == {"likes": 0, "goal": 500}
+    assert snap["miner_top"][0]["name"] == "Khách Follow"
+    assert snap["miner_top"][0]["gold"] == 10
+    pub = gf.players["fw2"].public()
+    assert pub["team"] == "meo" and pub["gold_total"] == 10
+
     print("✅ Tất cả test game đều PASS")
 
 

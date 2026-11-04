@@ -30,6 +30,7 @@
       <button id="modeRun">🏃 Chạy cùng Bug</button>
       <button id="modeBoss">🐭 Đánh Boss</button>
       <button id="modeGarden">🌿 Vườn Mèo</button>
+      <button id="modeMiner">⛏️ Đào Vàng PK</button>
     </div>
     <label>Máu boss (vòng 1)
       <input id="bossMaxHp" type="number" min="100" max="100000" step="100">
@@ -47,6 +48,7 @@
     </label>
     <p class="hint">Chế độ <b>Đánh Boss</b>: cả phòng gõ <b>CÀO</b> để tấn công Chuột Trùm Răng Sắt (5 mèo cùng cào trong 3 giây = <b>Đòn đồng loạt x2</b>), thả tim nạp thanh Nộ (đầy = mưa cá trút xuống boss), boss gục thì 15 giây sau hồi sinh với máu +20% mỗi vòng.</p>
     <p class="hint">Chế độ <b>Vườn Mèo</b>: mỗi người xem là một bé mèo với tính cách riêng (Ham Ăn / Lười Ngủ / Tăng Động / Chảnh / Nhút Nhát / Mê Cá) — gõ <b>HẠT</b>, <b>CHƠI</b>, <b>CÁ</b>, khen <b>XINH QUÁ</b> là mèo phản ứng theo tính cách; thả tim gom tim vườn, đủ mục tiêu tim thì mở <b>Bữa Tiệc Vườn</b>, đủ 1.000 tim vườn thì tới <b>Giờ Vàng</b>. Follow là mèo mới chuyển vào vườn ở luôn.</p>
+    <p class="hint">Chế độ <b>Đào Vàng PK</b>: 2 đội <b>Mèo</b> / <b>Chuột</b> thi đào vàng theo hiệp 100 giây — gõ <b>MÈO</b> / <b>CHUỘT</b> vào đội, gõ <b>ĐÀO</b> thả móc giật vàng (kim cương 150, túi vàng bí mật 5–100); thả tim đủ mục tiêu là <b>NỔ MÌN</b> phá đá lộ vàng; follow +10 vàng cho đội, quà tới thì đội được tăng tốc kéo, quà to (≥100 kim cương) có <b>Móc Vàng</b> tự chĩa cục giá trị nhất.</p>
     <button id="saveConfig">💾 Lưu cài đặt</button>
   </section>
 
@@ -72,6 +74,7 @@
       <button data-preset="de-thuong">🌸 Dễ thương (đang mặc định)</button>
       <button data-preset="am-ap">💛 Ấm áp</button>
       <button data-preset="nang-luong">⚡ Năng lượng</button>
+      <button data-preset="nam-tram">🎙️ Nam trầm</button>
     </div>
     <p class="hint" id="pitchInfo"></p>
     <div class="row" style="align-items:center;gap:10px">
@@ -92,6 +95,10 @@
       </select>
     </label>
     <label class="check"><input id="meowEnabled" type="checkbox" checked> Bật tiếng mèo kêu (khi có mèo mới, cho ăn, đua, thắng…)</label>
+    <label class="check"><input id="musicEnabled" type="checkbox" checked> 🎵 Bật nhạc nền sân khấu (nhạc tổng hợp bằng Web Audio, tự chạy khi sân khấu mở được tiếng, tự nhỏ xuống khi giọng đọc cất lên)</label>
+    <label>Âm lượng nhạc nền
+      <input id="musicVolume" type="range" min="0" max="100" step="5" value="50">
+    </label>
     <div class="row">
       <button id="meowTest">🐱 Nghe thử tiếng mèo</button>
       <button id="engineToggle">Đổi máy đọc: Edge / Trình duyệt</button>
@@ -139,7 +146,7 @@
       <button data-action="reset_likes">↩️ Reset đếm tim</button>
       <button data-action="reset_scores">🗑️ Reset điểm TOP</button>
     </div>
-    <p class="hint">Giọng đọc phát ở <b>trang sân khấu</b> — nhớ bấm nút "Bật giọng đọc" trên sân khấu 1 lần.</p>
+    <p class="hint">Giọng đọc phát ở <b>trang sân khấu</b> — sân khấu tự mở tiếng khi tải trang; nếu thấy pill 🔇 ở góc sân khấu thì chạm 1 lần vào sân khấu là có tiếng.</p>
   </section>
 
   <section class="card preview">

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -103,6 +104,11 @@ class Player:
     state_until: float = 0.0        # mốc wall-clock hết trạng thái vườn
     hearts: int = 0                 # số tim vườn đã sinh ra trong phiên
     treat_until: float = 0.0        # mốc wall-clock còn hiệu ứng bát đặc biệt (quà)
+    # --- Đào Vàng PK ---
+    team: Optional[str] = None      # "meo" | "chuot" | None (chưa vào đội)
+    gold_round: int = 0             # vàng đào được trong hiệp hiện tại
+    gold_total: int = 0             # vàng cộng dồn cả phiên (đua Vua Đào Vàng)
+    last_dao_at: float = 0.0        # cooldown lệnh ĐÀO (monotonic)
 
     def eff_speed_mode(self, now_mono: float) -> str:
         if self.speed_mode != "normal" and now_mono >= self.speed_until:
@@ -144,6 +150,9 @@ class Player:
             "golden": self.golden,
             "hearts": self.hearts,
             "treat": now_wall < self.treat_until,
+            # --- Đào Vàng PK ---
+            "team": self.team,
+            "gold_total": self.gold_total,
         }
 
 
@@ -284,6 +293,39 @@ OPENING_GARDEN = ("Chào cả nhà đến với Vườn Mèo của Bug! Mỗi b�
 IDLE_GARDEN = ("Cả nhà ơi, đây là Vườn Mèo của Bug — mỗi bé mèo một tính cách! Gõ HẠT gọi mèo ăn, "
                "gõ CHƠI rủ hội Tăng Động đuổi bóng, gõ NGỦ cho hội Lười đi ngủ, khen XINH QUÁ là "
                "Chảnh tạo dáng liền. Thả tim gom tim vườn — đủ mục tiêu tim là cả vườn mở tiệc nha!")
+OPENING_MINER = ("Chào mừng cả nhà đến với MỎ VÀNG CỦA BUG! Hai đội Mèo và Chuột tranh nhau "
+                 "từng cục vàng — gõ MÈO hoặc CHUỘT để vào đội, gõ ĐÀO để thả móc giật vàng. "
+                 "Ai đào được nhiều vàng nhất sẽ là Vua Đào Vàng hôm nay!")
+IDLE_MINER = ("Cả nhà ơi, mỏ vàng đang nóng! Gõ MÈO hoặc CHUỘT để vào đội, canh lúc móc quét "
+              "qua cục vàng to thì gõ ĐÀO để giật về cho đội mình nha! Thả tim cho đầy thanh "
+              "thuốc nổ là NỔ MÌN lộ vàng đó!")
+
+# --- Đào Vàng PK: 2 đội móc vàng thi đấu theo hiệp ---------------------------
+# Trường mỏ dùng toạ độ chuẩn hoá 0..1 (x theo chiều ngang sân khấu, y từ trên
+# xuống). Giá trị + cân nặng của vật phẩm chỉ nằm phía server; sân khấu chỉ
+# nhận {id, x, y, kind, r} — túi vàng giữ bí mật giá trị tới lúc giật trúng.
+MINER_TEAM_NAMES = {"meo": "Mèo", "chuot": "Chuột"}
+MINER_PIVOTS = {"meo": (0.20, 0.145), "chuot": (0.80, 0.145)}
+MINER_ITEMS = {
+    # kind:     (bán kính, giá trị (None = túi bí mật 5..100), cân nặng, % xuất hiện)
+    "gold_s":  (0.028, 10,   1, 34),
+    "gold_m":  (0.042, 25,   2, 24),
+    "gold_l":  (0.060, 60,   4, 10),
+    "diamond": (0.034, 150,  2, 4),
+    "rock":    (0.040, 5,    5, 18),
+    "bag":     (0.036, None, 2, 6),
+    "bone":    (0.030, 1,    1, 4),
+}
+MINER_FIELD_SIZE = 26          # số vật phẩm giữ trên trường mỏ
+MINER_ROUND_SECONDS = 100      # 1 hiệp đào
+MINER_PODIUM_SECONDS = 12      # nghỉ công bố kết quả giữa 2 hiệp
+MINER_HOOK_REACH = 0.825       # len=1 -> đầu móc chạm tối đa y=0.97 ở góc 0
+MINER_DROP_PER_SEC = 1 / 0.9   # thả móc: hết tầm trong ~0.9s
+MINER_PULL_PER_SEC = 1 / 0.7   # kéo tay không: về hết trong ~0.7s
+MINER_SWING_DEG = 68.0         # biên độ quét của móc (độ)
+MINER_SWING_PERIOD = 2.6       # chu kỳ quét qua lại (giây)
+MINER_DAO_COOLDOWN = 1.5       # giây, chống spam ĐÀO theo monotonic
+MINER_BAG_TARGET_VALUE = 50    # giá trị danh định của túi khi chọn mục tiêu móc vàng (quà to)
 
 # --- Thoại tâm trạng của Bug (xoay vòng cho đỡ lặp) ---
 OVERFEED_LINES = [
@@ -344,8 +386,8 @@ class GameState:
         self.scores_path = scores_path
         self.rng = rng or random.Random()
         self._next_seat = 0
-        # --- chế độ sân khấu: run | boss | garden ---
-        self.stage_mode = stage_mode if stage_mode in ("run", "boss", "garden") else "run"
+        # --- chế độ sân khấu: run | boss | garden | miner ---
+        self.stage_mode = stage_mode if stage_mode in ("run", "boss", "garden", "miner") else "run"
         # --- Vườn Mèo ---
         self.garden_hearts = 0             # tim vườn đã gom trong phiên
         self.garden_hearts_goal = 1000     # đủ mốc này -> Giờ Vàng (rồi mốc +1000)
@@ -357,6 +399,25 @@ class GameState:
         self._last_praise_mono = -100.0    # mốc monotonic lời khen hưởng ứng gần nhất
         self._golden_rolled: set = set()   # uid đã tung xúc xắc Mèo Vàng trong phiên
         self._golden_announced: set = set()  # uid Mèo Vàng đã được xướng tên
+        # --- Đào Vàng PK: trường mỏ xây LƯỜI (lazy) khi vào chế độ miner, để
+        # không tiêu tốn rng của các chế độ khác lúc khởi tạo ---
+        self._miner_ready = False
+        self.miner_items: List[dict] = []        # vật phẩm đang nằm trên trường mỏ
+        self.miner_respawn_due: List[float] = []  # mốc wall-clock vật phẩm hồi lại
+        self._miner_next_item_id = 1
+        self.miner_hooks: Dict[str, dict] = {}   # mỗi đội 1 móc (xây ở _miner_ensure)
+        self.miner_round = 1
+        self.miner_phase = "play"                # play | podium
+        self.miner_deadline = 0.0                # mốc wall-clock hết pha hiện tại
+        self.miner_score: Dict[str, int] = {"meo": 0, "chuot": 0}   # điểm hiệp
+        self.miner_wins: Dict[str, int] = {"meo": 0, "chuot": 0}    # số hiệp thắng
+        self.miner_buffs: Dict[str, dict] = {
+            t: {"mult": 1.0, "until": 0.0} for t in MINER_PIVOTS}
+        self._miner_elapsed = 0.0                # giờ game của mỏ (cho móc quét)
+        self._miner_last_tick_at: Optional[float] = None
+        self._miner_reach: Dict[str, float] = {}  # uid -> mốc wall-clock đạt mốc vàng hiệp hiện tại
+        self._miner_last_grab_speak_at = -100.0  # throttle đọc tin giật vàng to
+        self._miner_last_join_speak = -100.0     # throttle đọc tin vào đội (monotonic)
         self.boss = Boss(boss_max_hp)
         self.damage_by_user: Dict[str, int] = {}   # sát thương cộng dồn trong phiên
         self.boss_total_damage = 0                 # gồm cả sát thương mưa cá (cả đội)
@@ -377,6 +438,8 @@ class GameState:
         self._next_idle_taunt_at: Optional[float] = None  # mốc wall clock thoại rảnh tiếp
         self._now_mono = 0.0                       # mốc monotonic mới nhất thấy qua comment
         self._load_scores()
+        if self.stage_mode == "miner":
+            self._miner_ensure()
 
     # ------------------------------------------------------------- chế độ boss
     def set_boss_skin(self, pref: Optional[str]) -> None:
@@ -397,6 +460,8 @@ class GameState:
             return OPENING_BOSS
         if self.stage_mode == "garden":
             return OPENING_GARDEN
+        if self.stage_mode == "miner":
+            return OPENING_MINER
         return OPENING_RUN
 
     def idle_line(self) -> str:
@@ -405,7 +470,281 @@ class GameState:
             return IDLE_BOSS
         if self.stage_mode == "garden":
             return IDLE_GARDEN
+        if self.stage_mode == "miner":
+            return IDLE_MINER
         return IDLE_RUN
+
+    # ------------------------------------------------------- Đào Vàng PK
+    def _miner_ensure(self) -> None:
+        """Dựng trường mỏ + 2 móc lần đầu vào chế độ miner (lazy, xem __init__)."""
+        if self._miner_ready:
+            return
+        self._miner_ready = True
+        self.miner_hooks = {
+            team: {"pivot": pivot, "angle": 0.0, "len": 0.0, "state": "swing",
+                   "carrying": None, "carrying_kind": None, "caller": None,
+                   "golden": False}
+            for team, pivot in MINER_PIVOTS.items()
+        }
+        self.miner_deadline = time.time() + MINER_ROUND_SECONDS
+        while len(self.miner_items) < MINER_FIELD_SIZE:
+            if self._miner_spawn_item() is None:
+                break
+
+    def _miner_random_kind(self) -> str:
+        roll = self.rng.uniform(0, 100)
+        acc = 0.0
+        for kind, (_r, _v, _w, pct) in MINER_ITEMS.items():
+            acc += pct
+            if roll < acc:
+                return kind
+        return "gold_s"
+
+    def _miner_spawn_item(self, kind: Optional[str] = None) -> Optional[dict]:
+        """Sinh 1 vật phẩm ở vị trí ngẫu nhiên không chồng lấn (tối đa 40 lần thử)."""
+        kind = kind or self._miner_random_kind()
+        r, value, weight, _pct = MINER_ITEMS[kind]
+        for _ in range(40):
+            x = self.rng.uniform(0.03, 0.97)
+            if kind == "gold_l":
+                y = self.rng.uniform(0.55, 0.96)   # vàng to chìm sâu dưới đáy mỏ
+            else:
+                y = self.rng.uniform(0.20, 0.96)
+            ok = True
+            for it in self.miner_items:
+                dx, dy = x - it["x"], y - it["y"]
+                rr = r + it["r"] + 0.012
+                if dx * dx + dy * dy < rr * rr:
+                    ok = False
+                    break
+            if ok:
+                item = {"id": self._miner_next_item_id, "kind": kind,
+                        "x": round(x, 4), "y": round(y, 4), "r": r,
+                        "value": value, "weight": weight}
+                self._miner_next_item_id += 1
+                self.miner_items.append(item)
+                return item
+        return None
+
+    def _miner_team_size(self, team: str) -> int:
+        return sum(1 for p in self.players.values() if p.team == team)
+
+    def _miner_smaller_team(self) -> str:
+        return "meo" if self._miner_team_size("meo") <= self._miner_team_size("chuot") else "chuot"
+
+    def _miner_buff_mult(self, team: str, now_wall: float) -> float:
+        buff = self.miner_buffs.get(team) or {}
+        if now_wall < float(buff.get("until", 0.0)):
+            return float(buff.get("mult", 1.0))
+        return 1.0
+
+    def _miner_join_team(self, p: Player, team: str, now: float) -> List[dict]:
+        """Vào / đổi đội: điểm cá nhân giữ nguyên, vàng đội ở lại nơi đã kiếm."""
+        self._miner_ensure()
+        if p.team == team:
+            return []
+        p.team = team
+        eff: dict = {"type": "miner_join", "user": p.unique_id,
+                     "name": p.nickname, "team": team, "player": p.public(now)}
+        if now - self._miner_last_join_speak >= 3.0:
+            self._miner_last_join_speak = now
+            eff["speak"] = (f"{p.nickname} vào Đội {MINER_TEAM_NAMES[team]}! "
+                            "Gõ ĐÀO để thả móc đào vàng nha!")
+            eff["speak_priority"] = 4
+        return [eff]
+
+    def _miner_try_dao(self, p: Player, now: float) -> List[dict]:
+        """Gõ ĐÀO: chưa có đội thì tự vào đội ít người hơn trước, rồi thả móc
+        của đội mình (móc đang bận / đang nguội / ngoài giờ đấu -> bỏ qua lặng lẽ)."""
+        self._miner_ensure()
+        effects: List[dict] = []
+        if p.team is None:
+            effects += self._miner_join_team(p, self._miner_smaller_team(), now)
+        if self.miner_phase != "play":
+            return effects
+        if now - p.last_dao_at < MINER_DAO_COOLDOWN:
+            return effects
+        hook = self.miner_hooks[p.team]
+        if hook["state"] != "swing":
+            return effects
+        p.last_dao_at = now
+        hook["state"] = "drop"      # góc móc đóng băng tại thời điểm này
+        hook["caller"] = p.unique_id
+        hook["golden"] = False
+        effects.append({"type": "miner_drop", "team": p.team,
+                        "user": p.unique_id, "name": p.nickname})
+        return effects
+
+    def _miner_hook_tip(self, hook: dict) -> tuple:
+        px, py = hook["pivot"]
+        rad = math.radians(hook["angle"])
+        reach = hook["len"] * MINER_HOOK_REACH
+        return px + reach * math.sin(rad), py + reach * math.cos(rad)
+
+    def _miner_credit(self, team: str, hook: dict, now_wall: float) -> List[dict]:
+        """Móc kéo vật phẩm về tới nơi: cộng vàng cho đội + người thả móc."""
+        item = hook["carrying"]
+        caller_uid = hook["caller"]
+        hook["carrying"] = None
+        hook["carrying_kind"] = None
+        hook["golden"] = False
+        hook["caller"] = None
+        if item is None:
+            return []
+        value = int(item["value"])
+        self.miner_score[team] += value
+        caller = self.players.get(caller_uid or "")
+        if caller is not None:
+            caller.gold_round += value
+            caller.gold_total += value
+            self._miner_reach[caller.unique_id] = now_wall
+        eff: dict = {"type": "miner_grab", "team": team,
+                     "user": caller_uid,
+                     "name": caller.nickname if caller else "",
+                     "kind": item["kind"], "value": value}
+        flavor = {"gold_l": "VÀNG TO", "diamond": "KIM CƯƠNG", "bag": "TÚI VÀNG"}.get(item["kind"])
+        if (flavor and value >= 60 and caller is not None
+                and now_wall - self._miner_last_grab_speak_at >= 4.0):
+            self._miner_last_grab_speak_at = now_wall
+            eff["speak"] = (f"{caller.nickname} giật được {flavor} +{value} "
+                            f"cho Đội {MINER_TEAM_NAMES[team]}!")
+            eff["speak_priority"] = 3
+        return [eff]
+
+    def _miner_end_round(self, now_wall: float) -> List[dict]:
+        """Hết giờ đào: chốt điểm, xướng đội thắng + Vua Đào Vàng của hiệp."""
+        score_meo = self.miner_score["meo"]
+        score_chuot = self.miner_score["chuot"]
+        if score_meo > score_chuot:
+            winner: Optional[str] = "meo"
+        elif score_chuot > score_meo:
+            winner = "chuot"
+        else:
+            winner = None
+        if winner:
+            self.miner_wins[winner] += 1
+        mvp: Optional[Player] = None
+        for p in self.players.values():
+            if p.gold_round <= 0:
+                continue
+            if (mvp is None or p.gold_round > mvp.gold_round
+                    or (p.gold_round == mvp.gold_round
+                        and self._miner_reach.get(p.unique_id, 0.0)
+                        < self._miner_reach.get(mvp.unique_id, 0.0))):
+                mvp = p
+        round_no = self.miner_round
+        if winner:
+            speak = (f"Hết hiệp {round_no}! Đội {MINER_TEAM_NAMES[winner]} thắng "
+                     f"{score_meo}–{score_chuot}!")
+        else:
+            speak = f"Hiệp {round_no} hoà {score_meo}–{score_chuot}!"
+        if mvp is not None:
+            speak += (f" Vua Đào Vàng hiệp này là {mvp.nickname} "
+                      f"với {mvp.gold_round} vàng!")
+        eff = {"type": "miner_round_end", "round": round_no, "winner": winner,
+               "score_meo": score_meo, "score_chuot": score_chuot,
+               "mvp": mvp.unique_id if mvp else None,
+               "mvp_name": mvp.nickname if mvp else "",
+               "mvp_gold": mvp.gold_round if mvp else 0,
+               "speak": speak, "speak_priority": 1}
+        # Reset điểm hiệp + móc về trạng thái quét (vật đang kéo dở -> hồi lại sau)
+        self.miner_score = {"meo": 0, "chuot": 0}
+        self._miner_reach = {}
+        for p in self.players.values():
+            p.gold_round = 0
+        for hook in self.miner_hooks.values():
+            if hook["carrying"] is not None:
+                self.miner_respawn_due.append(now_wall + self.rng.uniform(4, 8))
+            hook["state"] = "swing"
+            hook["len"] = 0.0
+            hook["carrying"] = None
+            hook["carrying_kind"] = None
+            hook["caller"] = None
+            hook["golden"] = False
+        self.miner_phase = "podium"
+        self.miner_deadline = now_wall + MINER_PODIUM_SECONDS
+        return [eff]
+
+    def _miner_tick(self, now_wall: float) -> List[dict]:
+        """Nhịp mỏ trong tick(): chuyển pha hiệp, hồi vật phẩm, mô phỏng 2 móc.
+        dt lấy theo mốc now_wall truyền vào (kẹp 0..5s) nên test bước được."""
+        effects: List[dict] = []
+        if not self._miner_ready:
+            return effects
+        if self._miner_last_tick_at is None:
+            dt = 0.0
+        else:
+            dt = max(0.0, min(5.0, now_wall - self._miner_last_tick_at))
+        self._miner_last_tick_at = now_wall
+        self._miner_elapsed += dt
+
+        # --- chuyển pha: hết giờ đào -> podium 12s -> hiệp mới ---
+        if now_wall >= self.miner_deadline:
+            if self.miner_phase == "play":
+                effects += self._miner_end_round(now_wall)
+            elif self.miner_phase == "podium":
+                self.miner_round += 1
+                self.miner_phase = "play"
+                self.miner_deadline = now_wall + MINER_ROUND_SECONDS
+
+        # --- hồi vật phẩm đã hẹn giờ ---
+        if self.miner_respawn_due:
+            due = [t for t in self.miner_respawn_due if t <= now_wall]
+            self.miner_respawn_due = [t for t in self.miner_respawn_due if t > now_wall]
+            for _ in due:
+                self._miner_spawn_item()
+
+        # --- mô phỏng móc từng đội ---
+        for team, hook in self.miner_hooks.items():
+            if hook["state"] == "swing":
+                hook["angle"] = MINER_SWING_DEG * math.sin(
+                    self._miner_elapsed * 2 * math.pi / MINER_SWING_PERIOD)
+            elif hook["state"] == "drop":
+                prev_x, prev_y = self._miner_hook_tip(hook)
+                hook["len"] = min(1.0, hook["len"] + MINER_DROP_PER_SEC * dt)
+                tip_x, tip_y = self._miner_hook_tip(hook)
+                # Va chạm dọc ĐOẠN đường móc đi trong tick này: tick 0.5s móc
+                # đi được một quãng dài, chỉ soi điểm cuối sẽ bỏ sót vật nhỏ.
+                seg_dx, seg_dy = tip_x - prev_x, tip_y - prev_y
+                seg_len2 = seg_dx * seg_dx + seg_dy * seg_dy
+                hit = None
+                hit_t = None
+                for it in self.miner_items:
+                    if seg_len2 <= 0:
+                        t = 0.0
+                    else:
+                        t = ((it["x"] - prev_x) * seg_dx
+                             + (it["y"] - prev_y) * seg_dy) / seg_len2
+                        t = max(0.0, min(1.0, t))
+                    cx, cy = prev_x + t * seg_dx, prev_y + t * seg_dy
+                    dx, dy = it["x"] - cx, it["y"] - cy
+                    if dx * dx + dy * dy <= it["r"] * it["r"] \
+                            and (hit_t is None or t < hit_t):
+                        hit, hit_t = it, t
+                if hit is not None:
+                    self.miner_items.remove(hit)
+                    if hit["value"] is None:   # túi bí mật: tung giá trị lúc giật trúng
+                        hit["value"] = self.rng.randint(5, 100)
+                    hook["carrying"] = hit
+                    hook["carrying_kind"] = hit["kind"]
+                    hook["state"] = "pull"
+                    self.miner_respawn_due.append(now_wall + self.rng.uniform(4, 8))
+                elif hook["len"] >= 1.0 or not (0.01 < tip_x < 0.99) or tip_y > 0.98:
+                    hook["state"] = "pull"
+            elif hook["state"] == "pull":
+                item = hook["carrying"]
+                if item is None:
+                    speed = MINER_PULL_PER_SEC
+                else:
+                    speed = (MINER_PULL_PER_SEC / (0.6 + 0.45 * item["weight"])
+                             * self._miner_buff_mult(team, now_wall))
+                    if hook["golden"]:
+                        speed *= 3
+                hook["len"] = max(0.0, hook["len"] - speed * dt)
+                if hook["len"] <= 0.0:
+                    hook["state"] = "swing"
+                    effects += self._miner_credit(team, hook, now_wall)
+        return effects
 
     # ------------------------------------------------------- Vườn Mèo: tính cách
     def _assign_cat(self, p: Player) -> None:
@@ -624,9 +963,11 @@ class GameState:
     def set_stage_mode(self, mode: str, boss_max_hp: Optional[int] = None,
                        boss_taunts: Optional[bool] = None,
                        boss_skin: Optional[str] = None) -> None:
-        """Đổi chế độ sân khấu (run | boss | garden) + áp máu boss / công tắc thoại từ config."""
-        if mode not in ("run", "boss", "garden"):
+        """Đổi chế độ sân khấu (run | boss | garden | miner) + áp máu boss / thoại từ config."""
+        if mode not in ("run", "boss", "garden", "miner"):
             return
+        if mode == "miner":
+            self._miner_ensure()
         if boss_taunts is not None:
             self.boss_taunts = bool(boss_taunts)
         if boss_skin is not None:
@@ -839,6 +1180,45 @@ class GameState:
                 "hearts": p.hearts,
                 "personality_name": personality_info(p.personality)["name"],
             } for p in top_hearts]
+        if self.stage_mode == "miner":
+            self._miner_ensure()
+            now_m = time.time()
+            hooks_snap = {}
+            for team, hook in self.miner_hooks.items():
+                hooks_snap[team] = {
+                    "angle": round(hook["angle"], 1),
+                    "len": round(hook["len"], 3),
+                    "state": hook["state"],
+                    "carrying_kind": hook["carrying_kind"],
+                }
+            buffs_snap = {}
+            for team in MINER_PIVOTS:
+                buff = self.miner_buffs.get(team) or {}
+                until = float(buff.get("until", 0.0))
+                buffs_snap[team] = {
+                    "mult": float(buff.get("mult", 1.0)) if now_m < until else 1.0,
+                    "until": until,
+                }
+            snap["miner"] = {
+                "round": self.miner_round,
+                "phase": self.miner_phase,
+                "time_left": max(0, round(self.miner_deadline - now_m)),
+                "wins": dict(self.miner_wins),
+                "scores": dict(self.miner_score),
+                "members": {"meo": self._miner_team_size("meo"),
+                            "chuot": self._miner_team_size("chuot")},
+                "hooks": hooks_snap,
+                "items": [{"id": it["id"], "x": it["x"], "y": it["y"],
+                           "kind": it["kind"], "r": it["r"]}
+                          for it in self.miner_items],
+                "blast_progress": {"likes": self.likes_since_rain,
+                                   "goal": self.like_goal},
+                "buffs": buffs_snap,
+            }
+            top_gold = sorted(self.players.values(),
+                              key=lambda p: (-p.gold_total, p.joined_at))[:5]
+            snap["miner_top"] = [{"name": p.nickname, "gold": p.gold_total,
+                                  "team": p.team} for p in top_gold]
         return snap
 
     # ------------------------------------------------------------- sự kiện
@@ -873,6 +1253,19 @@ class GameState:
 
         text = normalize(comment)
         tokens = set(text.split())
+
+        # --- Đào Vàng PK: vào đội (MÈO / CHUỘT) + thả móc (ĐÀO) ---
+        # Phải chặn TRƯỚC handler MEOW ở dưới vì "meo" là lệnh vào Đội Mèo ở mỏ.
+        if self.stage_mode == "miner":
+            if text in ("meo", "doi meo"):
+                effects += self._miner_join_team(p, "meo", now)
+                return effects
+            if text in ("chuot", "doi chuot"):
+                effects += self._miner_join_team(p, "chuot", now)
+                return effects
+            if text == "dao":
+                effects += self._miner_try_dao(p, now)
+                return effects
 
         # --- Vườn Mèo: cả vườn phản ứng THEO TÍNH CÁCH với bình luận ---
         # (chỉ ở chế độ garden; các lệnh gốc cho Bug ở dưới vẫn chạy như cũ)
@@ -1088,6 +1481,31 @@ class GameState:
     def handle_like(self, count: int = 1) -> List[dict]:
         count = max(0, int(count))
         self.total_likes += count
+        if self.stage_mode == "miner":
+            # Đào Vàng PK: tim nạp thanh thuốc nổ; đầy like_goal -> NỔ MÌN:
+            # đá trên trường mỏ bay hết, 5 cục vàng mới lộ ra, chu trình tim reset.
+            self._miner_ensure()
+            self.likes_since_rain += count
+            effects: List[dict] = [{"type": "likes",
+                                    "likes_since_rain": self.likes_since_rain,
+                                    "like_goal": self.like_goal,
+                                    "total_likes": self.total_likes}]
+            if self.likes_since_rain >= self.like_goal:
+                self.likes_since_rain = 0
+                now_wall = time.time()
+                rocks = [it for it in self.miner_items if it["kind"] == "rock"]
+                self.miner_items = [it for it in self.miner_items
+                                    if it["kind"] != "rock"]
+                for _ in rocks:
+                    self.miner_respawn_due.append(now_wall + self.rng.uniform(4, 8))
+                for kind in ("gold_l", "gold_m", "gold_m", "gold_l", "gold_m"):
+                    self._miner_spawn_item(kind)
+                effects.append({
+                    "type": "miner_blast",
+                    "speak": "💥 NỔ MÌN! Đá bay hết, vàng lộ ra rồi — ĐÀO mau cả nhà ơi!",
+                    "speak_priority": 1,
+                })
+            return effects
         if self.stage_mode == "boss":
             # Chế độ Đánh Boss: tim nạp thanh Nộ thay cho đếm mưa cá.
             # Đầy Nộ -> mưa cá trút xuống boss, sát thương cả đội (không tính riêng ai).
@@ -1206,6 +1624,46 @@ class GameState:
                     self._garden_bump(cat, 10)
             effects.append({"type": "garden_treat", "player": p.public(),
                             "gift_name": gift_name, "diamond_count": d})
+        # Đào Vàng PK: quà (khi tự đến) buff tốc độ kéo cho đội người tặng;
+        # quà thật to (>=100 kim cương) -> MÓC VÀNG: móc tự chĩa thẳng cục giá trị
+        # nhất trên mỏ và kéo x3. Chỉ là phản ứng cảm ơn, KHÔNG kêu gọi quà.
+        if self.stage_mode == "miner":
+            self._miner_ensure()
+            d = int(diamond_count or 1)
+            if p.team is None:
+                p.team = self._miner_smaller_team()
+            team = p.team
+            now_wall = time.time()
+            buffed = False
+            if d >= 100:
+                hook = self.miner_hooks[team]
+                targets = [it for it in self.miner_items
+                           if it["kind"] in ("gold_s", "gold_m", "gold_l",
+                                             "diamond", "bag")]
+                if hook["state"] == "swing" and targets:
+                    def _target_value(it):
+                        return it["value"] if it["value"] is not None \
+                            else MINER_BAG_TARGET_VALUE
+                    target = max(targets, key=_target_value)
+                    px, py = hook["pivot"]
+                    angle = math.degrees(math.atan2(target["x"] - px,
+                                                    target["y"] - py))
+                    hook["angle"] = max(-MINER_SWING_DEG,
+                                        min(MINER_SWING_DEG, angle))
+                    hook["state"] = "drop"
+                    hook["caller"] = p.unique_id
+                    hook["golden"] = True
+                    effects.append({"type": "miner_golden_grab", "team": team,
+                                    "user": p.unique_id, "name": p.nickname,
+                                    "kind": target["kind"]})
+                    buffed = True
+            if not buffed:
+                mult, seconds = (1.6, 30) if d >= 10 else (1.3, 15)
+                self.miner_buffs[team] = {"mult": mult,
+                                          "until": now_wall + seconds}
+                effects.append({"type": "miner_buff", "team": team,
+                                "mult": mult, "until": now_wall + seconds,
+                                "user": p.unique_id, "name": p.nickname})
         return effects
 
     def handle_follow(self, unique_id: str, nickname: str,
@@ -1217,6 +1675,17 @@ class GameState:
                                 "speak": f"Cảm ơn {p.nickname} đã follow nhà Bug!",
                                 "speak_priority": 2}]
         effects += self._golden_fx(p)
+        if self.stage_mode == "miner":
+            # Đào Vàng PK: follow = +10 vàng cho đội (chưa có đội -> vào đội ít người)
+            self._miner_ensure()
+            if p.team is None:
+                p.team = self._miner_smaller_team()
+            p.gold_round += 10
+            p.gold_total += 10
+            self.miner_score[p.team] += 10
+            self._miner_reach[p.unique_id] = time.time()
+            effects.append({"type": "miner_follow_bonus", "user": p.unique_id,
+                            "name": p.nickname, "team": p.team, "value": 10})
         if self.stage_mode == "garden":
             # Vườn Mèo: mèo của người follow chuyển vào vườn ở hẳn phiên này
             # (+25 tim vườn) — và KHÔNG có màn chó đuổi như chế độ chạy.
@@ -1296,6 +1765,10 @@ class GameState:
         # --- Vườn Mèo: độ vui trôi về 55 + sinh tim vườn mỗi 5s ---
         if self.stage_mode == "garden":
             effects += self._garden_tick(now_wall)
+
+        # --- Đào Vàng PK: nhịp hiệp + mô phỏng móc ---
+        if self.stage_mode == "miner":
+            effects += self._miner_tick(now_wall)
 
         # --- Đánh Boss: xướng boss xuất hiện 1 lần + hồi sinh sau 15s ---
         if self.stage_mode == "boss":
@@ -1422,11 +1895,18 @@ class GameState:
             p.in_team = False
             p.hearts = 0
             p.happiness = 60.0
+            p.team = None
+            p.gold_round = 0
+            p.gold_total = 0
         self.damage_by_user = {}
         self.boss_total_damage = 0
         self._rank_announced = {}
         self.garden_hearts = 0
         self.garden_hearts_goal = 1000
+        self.miner_score = {"meo": 0, "chuot": 0}
+        self.miner_wins = {"meo": 0, "chuot": 0}
+        self.miner_round = 1
+        self._miner_reach = {}
         self._save_scores()
 
     # ------------------------------------------------------------- lưu điểm

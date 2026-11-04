@@ -22,6 +22,8 @@ fetch("/api/config").then((r) => r.json()).then((cfg) => {
   $("bossSkin").value = cfg.boss_skin || "auto";
   setModeUI(cfg.stage_mode || "run");
   if (typeof cfg.meow_enabled === "boolean") $("meowEnabled").checked = cfg.meow_enabled;
+  if (typeof cfg.music_enabled === "boolean") $("musicEnabled").checked = cfg.music_enabled;
+  if (typeof cfg.music_volume === "number") $("musicVolume").value = cfg.music_volume;
   if (cfg.vbee_app_id) $("vbeeAppId").value = cfg.vbee_app_id;
   $("vbeeToken").placeholder = cfg.vbee_token_set ? "•••••• (đã lưu — để trống nếu không đổi)" : "Dán Access Token từ Vbee";
   setVbeeVoice(cfg.vbee_voice || "");
@@ -158,13 +160,20 @@ async function loadVoices() {
 loadVoices();
 document.querySelectorAll("[data-preset]").forEach((btn) => {
   btn.onclick = async () => {
-    await post("/api/config", { voice_preset: btn.dataset.preset });
+    if (btn.dataset.preset === "nam-tram") {
+      // Nam trầm: Nam Minh hạ tông -30Hz, tốc độ chuẩn — đúng bộ 3 giá trị preset
+      await post("/api/config", { tts_voice: "vi-VN-NamMinhNeural", tts_pitch: -30, tts_rate: 0, tts_engine: "edge" });
+    } else {
+      await post("/api/config", { voice_preset: btn.dataset.preset });
+    }
     log("Đã đổi preset giọng: " + btn.textContent.trim());
     loadVoices();
   };
 });
 $("ttsRate").onchange = async () => { await post("/api/config", { tts_rate: Number($("ttsRate").value) || 0 }); log("Đã đổi tốc độ đọc"); };
 $("meowEnabled").onchange = async () => { await post("/api/config", { meow_enabled: $("meowEnabled").checked }); log("Tiếng mèo: " + ($("meowEnabled").checked ? "BẬT" : "TẮT")); };
+$("musicEnabled").onchange = async () => { await post("/api/config", { music_enabled: $("musicEnabled").checked }); log("Nhạc nền sân khấu: " + ($("musicEnabled").checked ? "BẬT" : "TẮT")); };
+$("musicVolume").onchange = async () => { await post("/api/config", { music_volume: Number($("musicVolume").value) || 0 }); log("Âm lượng nhạc nền: " + $("musicVolume").value + "%"); };
 $("engineToggle").onclick = async () => {
   const cfg = await (await fetch("/api/config")).json();
   const next = cfg.tts_engine === "edge" ? "browser" : "edge";
@@ -196,6 +205,7 @@ function setModeUI(mode) {
   $("modeRun").classList.toggle("primary", mode === "run");
   $("modeBoss").classList.toggle("primary", mode === "boss");
   $("modeGarden").classList.toggle("primary", mode === "garden");
+  $("modeMiner").classList.toggle("primary", mode === "miner");
 }
 $("modeRun").onclick = async () => {
   await post("/api/config", { stage_mode: "run" });
@@ -211,6 +221,11 @@ $("modeGarden").onclick = async () => {
   await post("/api/config", { stage_mode: "garden" });
   setModeUI("garden");
   log("Chế độ sân khấu: 🌿 Vườn Mèo của Bug");
+};
+$("modeMiner").onclick = async () => {
+  await post("/api/config", { stage_mode: "miner" });
+  setModeUI("miner");
+  log("Chế độ sân khấu: ⛏️ Đào Vàng PK — Đội Mèo vs Đội Chuột");
 };
 $("bossMaxHp").onchange = async () => {
   await post("/api/config", { boss_max_hp: Number($("bossMaxHp").value) || 1000 });
@@ -272,4 +287,7 @@ ws.onmessage = (ev) => {
   else if (msg.type === "garden_feast") log("🌿🎉 Bữa Tiệc Vườn mở — cả đàn mèo vào bàn ăn!");
   else if (msg.type === "garden_golden_hour") log("🌇 Giờ Vàng tới — cả vườn mở tiệc lớn!");
   else if (msg.type === "garden_golden") log("✨ Mèo Vàng xuất hiện trong vườn — tim nhân đôi!");
+  else if (msg.type === "miner_round_end") log("⛏️🏆 Hết hiệp " + msg.round + ": " + (msg.winner ? "Đội " + (msg.winner === "meo" ? "Mèo" : "Chuột") + " thắng " : "Hoà ") + msg.score_meo + "–" + msg.score_chuot + (msg.mvp_name ? " • 👑 " + msg.mvp_name + " (" + msg.mvp_gold + " vàng)" : ""));
+  else if (msg.type === "miner_blast") log("⛏️💥 NỔ MÌN! Đá bay hết, vàng lộ ra!");
+  else if (msg.type === "miner_golden_grab") log("⛏️🌟 Móc Vàng — Đội " + (msg.team === "meo" ? "Mèo" : "Chuột") + " chĩa thẳng " + msg.kind + "!");
 };
