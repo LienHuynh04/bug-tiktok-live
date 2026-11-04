@@ -359,16 +359,23 @@ setInterval(() => {
   if (b !== music.boost) music.setBoost(b);
 }, 400);
 
-/* ================= cổng âm thanh: tự mở khoá, không cần bấm nút =================
-   Trình duyệt chặn autoplay có tiếng cho tới khi có tương tác — nên sân khấu
-   tự thử mở khoá liên tục (load / quay lại tab / mỗi 3s / chạm phím đầu tiên).
-   Mở được là: bật giọng đọc + chạy nhạc nền + ẩn pill cảnh báo mỏng. */
+/* ================= cổng âm thanh: TỰ BẬT tiếng ngay khi mở sân khấu =================
+   Không còn pill "chạm 1 lần để mở tiếng": sân khấu tự thử mở khoá ở mọi
+   thời điểm có thể — mở trang, quay lại tab, focus, mỗi gói dữ liệu WS,
+   và một vòng canh mỗi 1.2s — để nhạc nền + giọng đọc TỰ CHẠY ngay khi
+   trình duyệt cho phép, ở mọi chế độ game. Trình duyệt nào vẫn chặn
+   (chưa từng cho phép trang này phát tiếng) thì lần chạm/phím đầu tiên
+   vào sân khấu cũng tự mở luôn, không cần bấm nút riêng nào cả. */
 const audioGate = {
   unlocked: false,
+  _lastTry: 0,
   tryUnlock() {
+    const now = performance.now();
+    if (now - this._lastTry < 250) return; // chống dội khi nhiều sự kiện cùng lúc
+    this._lastTry = now;
     meow.unlock();
     const ctx = meow.ctx;
-    if (!ctx) { this._pill(); return; }
+    if (!ctx) return;
     ctx.onstatechange = () => { if (ctx.state === "running") this.onUnlocked(); };
     try {
       // "tick" buffer im lặng để đánh thức pipeline âm thanh
@@ -379,29 +386,30 @@ const audioGate = {
     } catch { /* bỏ qua */ }
     if (ctx.state === "running") this.onUnlocked();
     else if (ctx.resume) ctx.resume().then(() => { if (ctx.state === "running") this.onUnlocked(); }).catch(() => {});
-    this._pill();
   },
   onUnlocked() {
     if (this.unlocked) return;
     this.unlocked = true;
     tts.enabled = true;
-    this._pill();
     music.start();
-  },
-  _pill() {
-    const pill = $("audioPill");
-    if (pill) pill.classList.toggle("hidden", this.unlocked);
   },
 };
 window.addEventListener("load", () => audioGate.tryUnlock());
+window.addEventListener("pageshow", () => audioGate.tryUnlock());
+window.addEventListener("focus", () => audioGate.tryUnlock());
 document.addEventListener("visibilitychange", () => { if (!document.hidden) audioGate.tryUnlock(); });
 document.addEventListener("pointerdown", () => audioGate.tryUnlock());
+document.addEventListener("touchend", () => audioGate.tryUnlock());
 document.addEventListener("keydown", () => audioGate.tryUnlock());
-const audioRetryTimer = setInterval(() => {
-  if (audioGate.unlocked) { clearInterval(audioRetryTimer); return; }
-  audioGate.tryUnlock();
-}, 3000);
-audioGate._pill();
+// Vòng canh 1.2s: chưa mở khoá thì thử lại; đã mở mà context bị treo
+// (LIVE Studio treo nguồn ẩn) hoặc nhạc bị dừng thì tự chạy lại.
+setInterval(() => {
+  if (!audioGate.unlocked) { audioGate.tryUnlock(); return; }
+  const ctx = meow.ctx;
+  if (!ctx) return;
+  if (ctx.state === "suspended" && ctx.resume) ctx.resume().catch(() => {});
+  if (ctx.state === "running" && music.enabled && !music.playing) music.start();
+}, 1200);
 
 /* ================= trạng thái thế giới ================= */
 const players = new Map(); // uid -> {data, img, imgOk, hue, bubble, bubbleUntil, jumpUntil, mount, mountUntil}
@@ -4735,7 +4743,7 @@ function handle(msg) {
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch (e) { /* bỏ qua gói lỗi */ } };
+  ws.onmessage = (ev) => { audioGate.tryUnlock(); try { handle(JSON.parse(ev.data)); } catch (e) { /* bỏ qua gói lỗi */ } };
   ws.onclose = () => setTimeout(connect, 2000);
 }
 connect();

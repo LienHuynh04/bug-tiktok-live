@@ -39,11 +39,12 @@ Làm theo thứ tự 6 bước. Lần đầu mất khoảng 10 phút, các lần
    - Kích thước: **Width 1080 × Height 1920**. Kéo cho sân khấu phủ kín khung dọc.
    - Nếu LIVE Studio báo không tải được `lvh.me`, thử `http://localhost:3000/stage`.
      Cả hai đều trỏ về chính máy bạn, không phải máy chủ bên ngoài.
-4. **Bật tiếng + bấm bật giọng (bắt buộc, làm 1 lần mỗi buổi):**
-   - Nhấp chuột phải vào nguồn sân khấu → **Tương tác (Interact)** → cửa sổ sân khấu hiện ra
-     → bấm nút vàng **"🔊 Bấm vào đây để bật giọng đọc + tiếng mèo kêu"** → đóng cửa sổ Interact.
-   - Lý do: trình duyệt chỉ cho phát âm thanh sau khi có người bấm 1 lần. Không bấm là
-     live vẫn chạy hình nhưng **câm tiếng**.
+4. **Tiếng tự bật khi sân khấu chạy (không cần bấm nút bật giọng nữa):**
+   - Nhạc nền + giọng đọc tự chạy ngay khi sân khấu mở, ở mọi chế độ game.
+   - Nếu một buổi nào đó live có hình mà **không tiếng**: nhấp chuột phải vào nguồn sân
+     khấu → **Tương tác (Interact)** → bấm 1 lần vào bất kỳ đâu trên sân khấu → đóng cửa
+     sổ Interact. Lý do: một số trình duyệt chỉ cho phát âm thanh sau lần chạm đầu tiên
+     vào trang — app đã tự thử mở liên tục, cú bấm đó là "chìa khoá" cuối cùng cho buổi đó.
    - Kiểm tra thanh âm lượng của nguồn trong LIVE Studio không bị mute / kéo về 0.
 
 ## Bước 4 — Kết nối sự kiện TikTok
@@ -77,7 +78,7 @@ Làm theo thứ tự 6 bước. Lần đầu mất khoảng 10 phút, các lần
 | Hiện tượng | Nguyên nhân & cách xử lý |
 |---|---|
 | Sân khấu trong LIVE Studio đen/trắng xóa | App chưa chạy (quay lại bước 1), hoặc sai URL/cổng. Mở thử http://localhost:3000/stage bằng Chrome trên chính máy — không lên thì LIVE Studio cũng không lên. |
-| Có hình, không có tiếng đọc/kêu | Chưa bấm nút bật giọng trong cửa sổ **Interact** (bước 3.4), hoặc nguồn bị mute trong LIVE Studio. |
+| Có hình, không có tiếng đọc/kêu | Bấm 1 lần vào sân khấu trong cửa sổ **Interact** (bước 3.4), hoặc nguồn bị mute trong LIVE Studio. |
 | Nghe thử giọng ở trang điều khiển báo lỗi | Kiểm tra internet (giọng thật do Microsoft tạo online). Nếu mới nâng cấp từ v1: xóa `.venv` chạy lại BAT để cài `edge-tts`. Vẫn lỗi thì bấm **Đổi máy đọc → Trình duyệt** để dùng tạm giọng máy. |
 | Bấm Kết nối mà không thấy sự kiện | (1) Chưa Go LIVE; (2) sai username; (3) TikTok vừa đổi API → cập nhật thư viện: mở thư mục bug-live, chạy `.venv\Scripts\pip install -U TikTokLive edge-tts` rồi chạy lại BAT. |
 | Báo **UserNotFoundError** ("not capable of going LIVE… or does not exist") | Không phải lỗi code. Chỉ có 3 nguyên nhân: (1) **sai username** — phải lấy đúng @tên ở trang cá nhân (link tiktok.com/@…), đừng gõ tên hiển thị "IT có con mèo tên Bug"; (2) **chưa Go LIVE** — phải đang live mới kết nối được; (3) tài khoản **chưa từng live / chưa đủ điều kiện** mở LIVE. Thử nhanh: phát live bằng điện thoại 1 phút rồi bấm Kết nối trong lúc đang live. |

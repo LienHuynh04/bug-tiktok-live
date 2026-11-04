@@ -428,14 +428,3 @@ footer {
 #rainLayer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 40; }
 .rain-drop { position: absolute; top: -6vh; animation: fall linear forwards; }
 @keyframes fall { to { transform: translateY(112vh) rotate(40deg); } }
-/* pill mỏng báo trạng thái tiếng: chỉ hiện khi âm thanh CHƯA được mở khoá
-   (trình duyệt chặn autoplay) — mở được tiếng là tự ẩn ngay */
-#audioPill {
-  position: absolute; right: 2.5vw; bottom: 5.2vh; z-index: 60;
-  background: rgba(15, 18, 32, .78); color: #ffd88a;
-  border: 1px solid rgba(255, 216, 138, .45); border-radius: 99px;
-  font-size: 1.15vh; font-weight: 600; padding: .5vh 12px;
-  box-shadow: 0 3px 10px rgba(10,20,40,.3); pointer-events: none;
-  max-width: 62vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-#audioPill.hidden { display: none; }
