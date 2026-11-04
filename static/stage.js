@@ -609,7 +609,7 @@ function updateGarden(s) {
   const top = s.garden_top || [];
   $("gardenTopList").innerHTML = top.length
     ? top.map((t, i) => `<li><span class="rname">${i + 1}. ${escapeHtml(t.name)} · ${escapeHtml(t.personality_name || "")}</span><span class="rkm">❤️ ${t.hearts}</span></li>`).join("")
-    : `<li><span class="rname">Chưa có tim nào — thả tim nha!</span></li>`;
+    : `<li><span class="rname">Chưa có tim nào — vườn đang chờ tim đầu tiên!</span></li>`;
 }
 
 /* ================= chế độ Đào Vàng PK ================= */
@@ -908,16 +908,16 @@ setInterval(() => {
 }, 1000);
 
 const GUIDE_TEXTS = [
-  "Follow để Bug đuổi theo nha! 🐕",
+  "Bug thấy người mới là đuổi theo đó! 🐕",
   "Gõ \"chạy\" để vào đội chạy cùng Bug 🏃",
   "Gõ \"hạng\" để xem thứ hạng của bạn 🏆",
-  "Thả tim đủ là mưa cá đó! ❤️🐟",
+  "Đủ tim là mưa cá đó! ❤️🐟",
   "Bug đói là cả đội chạy chậm lại — nhớ gõ \"hạt\" 🥣",
 ];
 const BOSS_GUIDE_TEXTS = [
   "🐾 Gõ CÀO để tấn công boss!",
   "5 mèo cùng \"cào\" trong 3 giây → ĐÒN ĐỒNG LOẠT x2! ⚡",
-  "🔥 Thả tim nạp Nộ → mưa cá dội boss",
+  "🔥 Tim đầy thanh Nộ → mưa cá dội boss",
   "Boss choáng là lúc cào đau gấp đôi đó! 💫",
   "Gõ \"hạt\" cho Bug ăn lấy sức 🥣",
   "🏆 Đánh nhiều lên hạng mèo: Săn → Chiến → Tướng → Vương",
@@ -928,20 +928,20 @@ const GARDEN_GUIDE_TEXTS = [
   "🧶 Gõ \"chơi\" rủ hội Tăng Động đuổi bóng",
   "💅 Khen \"xinh quá\" là Chảnh tạo dáng liền",
   "🐟 Gõ \"cá\" — Mê Cá chầu kho cá ngay",
-  "❤️ Thả tim gom tim vườn — đủ 500 mở Bữa Tiệc Vườn!",
+  "❤️ Tim vườn đủ 500 → mở Bữa Tiệc Vườn!",
 ];
 const MINER_GUIDE_TEXTS = [
   "⛏️ Gõ \"mèo\" hoặc \"chuột\" để vào đội đào vàng!",
   "🎯 Canh móc quét qua cục vàng to rồi gõ \"đào\"!",
   "💎 Kim cương 150 vàng — thấy là phải giật ngay!",
-  "❤️ Thả tim đủ là NỔ MÌN phá đá, lộ vàng!",
+  "❤️ Đủ tim là NỔ MÌN phá đá, lộ vàng!",
   "🏆 Đào nhiều vàng nhất hiệp = Vua Đào Vàng!",
 ];
 const TUG_GUIDE_TEXTS = [
   "🪢 Gõ \"cam\" hoặc \"xám\" để vào đội kéo co!",
   "💪 Gõ \"kéo\" liên tục — kéo nhiều là mệt, nhớ nghỉ lấy sức!",
   "📣 Gõ \"hò\" để lên tinh thần — đội kéo mạnh hẳn!",
-  "❤️ Thả tim đủ là NỔI TRỐNG HỘI, cả hai đội sung sức!",
+  "❤️ Đủ tim là NỔI TRỐNG HỘI, cả hai đội sung sức!",
   "🏆 Kéo cờ qua vạch 85 là thắng hiệp — HÒ DÔ TA!",
 ];
 const OFFICE_GUIDE_TEXTS = [
@@ -949,7 +949,7 @@ const OFFICE_GUIDE_TEXTS = [
   "👀 Sếp đang NHÌN thì đừng lén — bị bắt là ra góc phạt đó!",
   "💻 Gõ \"làm\" giả vờ chăm chỉ để hạ nghi ngờ",
   "🐱 Bug tới bàn ai thì gõ \"bug\" cho Bug ăn nha",
-  "❤️ Thả tim đủ 200 → sếp đi nghỉ pha cà phê 15 giây!",
+  "❤️ Đủ 200 tim → sếp đi nghỉ pha cà phê 15 giây!",
   "🎉 Quỹ ăn vụng đủ 500 → mở TIỆC VĂN PHÒNG!",
 ];
 function guideTextsFor(mode) {

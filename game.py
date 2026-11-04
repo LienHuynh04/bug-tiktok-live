@@ -313,39 +313,39 @@ def boss_skin_for_round(round_no: int) -> str:
 # --- Câu mở màn / nhắc luật theo chế độ sân khấu (run giữ nguyên văn cũ) ---
 OPENING_RUN = "Cả nhà gõ MEOW để nhận mèo, gõ CHẠY để vào đội chạy cùng Bug nha!"
 OPENING_BOSS = ("Chào cả nhà đến với nhà của Bug! Hôm nay Chuột Trùm Răng Sắt mò vào "
-                "cướp kho cá — cả nhà gõ CÀO để đánh boss cùng Bug nha! Thả tim nạp Nộ, "
+                "cướp kho cá — cả nhà gõ CÀO để đánh boss cùng Bug nha! Tim đầy thanh Nộ, "
                 "đủ 200 là mưa cá trút xuống đầu nó luôn!")
 IDLE_RUN = ("Cả nhà ơi, gõ meow để nhận một bé mèo mang tên mình, gõ hạt để cho Bug ăn, "
-            "gõ đua để đua mèo cùng nhau nha! Nhớ thả tim và chia sẻ live giúp Bug với.")
-IDLE_BOSS = ("Cả nhà ơi, gõ CÀO để tấn công Chuột Trùm Răng Sắt cùng Bug nha! Thả tim "
-             "nạp Nộ, đủ 200 là mưa cá trút xuống boss. Gõ HẠT cho Bug ăn lấy sức, "
+            "gõ đua để đua mèo cùng nhau nha!")
+IDLE_BOSS = ("Cả nhà ơi, gõ CÀO để tấn công Chuột Trùm Răng Sắt cùng Bug nha! Tim đầy "
+             "thanh Nộ, đủ 200 là mưa cá trút xuống boss. Gõ HẠT cho Bug ăn lấy sức, "
              "gõ NGỦ cho Bug nghỉ một lát nha!")
 OPENING_GARDEN = ("Chào cả nhà đến với Vườn Mèo của Bug! Mỗi bạn là một bé mèo với tính cách riêng — "
                   "gõ HẠT gọi ăn, gõ CHƠI rủ chơi, khen XINH QUÁ là có mèo tạo dáng liền. "
-                  "Thả tim gom đủ 500 là cả vườn mở tiệc nha!")
+                  "Gom đủ 500 tim vườn là cả vườn mở tiệc nha!")
 IDLE_GARDEN = ("Cả nhà ơi, đây là Vườn Mèo của Bug — mỗi bé mèo một tính cách! Gõ HẠT gọi mèo ăn, "
                "gõ CHƠI rủ hội Tăng Động đuổi bóng, gõ NGỦ cho hội Lười đi ngủ, khen XINH QUÁ là "
-               "Chảnh tạo dáng liền. Thả tim gom tim vườn — đủ mục tiêu tim là cả vườn mở tiệc nha!")
+               "Chảnh tạo dáng liền. Tim vườn đủ mục tiêu là cả vườn mở tiệc nha!")
 OPENING_MINER = ("Chào mừng cả nhà đến với MỎ VÀNG CỦA BUG! Hai đội Mèo và Chuột tranh nhau "
                  "từng cục vàng — gõ MÈO hoặc CHUỘT để vào đội, gõ ĐÀO để thả móc giật vàng. "
                  "Ai đào được nhiều vàng nhất sẽ là Vua Đào Vàng hôm nay!")
 IDLE_MINER = ("Cả nhà ơi, mỏ vàng đang nóng! Gõ MÈO hoặc CHUỘT để vào đội, canh lúc móc quét "
-              "qua cục vàng to thì gõ ĐÀO để giật về cho đội mình nha! Thả tim cho đầy thanh "
+              "qua cục vàng to thì gõ ĐÀO để giật về cho đội mình nha! Tim đầy thanh "
               "thuốc nổ là NỔ MÌN lộ vàng đó!")
 OPENING_TUG = ("Chào cả nhà đến với HỘI KÉO CO của làng Bug! Gõ CAM vào đội Mèo Cam, "
                "gõ XÁM vào đội Mèo Xám — gõ KÉO là kéo dây, gõ HÒ là hò lấy sức! "
                "Đội nào kéo được cờ qua vạch của mình là thắng hiệp!")
 IDLE_TUG = ("Cả nhà ơi, hội kéo co làng Bug đang sôi! Gõ CAM hoặc XÁM để vào đội, "
             "gõ KÉO kéo dây, gõ HÒ DÔ lấy khí thế cho đội mình nha! Kéo phải giữ sức — "
-            "mèo đuối sức là kéo yếu hẳn đó. Thả tim đủ mốc là trống hội nổi lên, "
+            "mèo đuối sức là kéo yếu hẳn đó. Tim đủ mốc là trống hội nổi lên, "
             "cả hai đội kéo mạnh hẳn!")
 OPENING_OFFICE = ("Chào cả nhà đến với văn phòng của Bug! Sếp Răng Sắt đi tuần liên tục — "
                   "canh lúc sếp đi pha cà phê mà ăn vụng, nói chuyện, chơi game lén nha! "
-                  "Bị bắt là ra đứng góc phạt đó. Thả tim rót cà phê cho sếp đi nghỉ nào!")
+                  "Bị bắt là ra đứng góc phạt đó. Đủ 200 tim là sếp phải đi nghỉ pha cà phê đó!")
 IDLE_OFFICE = ("Cả nhà ơi, văn phòng đang giờ làm — sếp Răng Sắt đi tuần liên tục đó! "
                "Gõ ĂN ăn vụng, CHAT nói chuyện, GAME chơi lén, BUG cho Bug ăn, "
                "LÀM giả vờ gõ phím cho đỡ bị để ý nha. Canh lúc sếp xao lãng là điểm "
-               "nhân đôi. Thả tim đủ 200 là sếp phải đi nghỉ pha cà phê 15 giây!")
+               "nhân đôi. Đủ 200 tim là sếp phải đi nghỉ pha cà phê 15 giây!")
 
 # --- Đào Vàng PK: 2 đội móc vàng thi đấu theo hiệp ---------------------------
 # Trường mỏ dùng toạ độ chuẩn hoá 0..1 (x theo chiều ngang sân khấu, y từ trên
