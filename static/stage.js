@@ -142,11 +142,14 @@ const meow = {
     this.play("kitten");
   },
 };
-/* ================= nhạc nền: giai điệu "đào vàng" tổng hợp bằng Web Audio =================
-   Nhạc gốc soạn trong code (không dùng file / không vay giai điệu game nào):
-   điệu pluck vui nhộn tông C major ~112 BPM — lead triangle + bass square +
-   hat noise. Chạy khi âm thanh đã mở khoá VÀ music_enabled; giọng đọc cất
-   lên thì nhạc tự nhỏ xuống 30% (ducking), đọc xong lại to như cũ. */
+/* ================= nhạc nền: nhạc tổng hợp bằng Web Audio, mỗi mode một bản =================
+   Nhạc gốc soạn trong code (không dùng file / không vay giai điệu nào):
+   - bản mặc định: pluck vui nhộn tông C major ~112 BPM — lead triangle +
+     bass square + hat noise.
+   - bản "trống hội" riêng cho Kéo Co: trống cái + phách gỗ + sáo ngũ cung
+     ~126 BPM; lúc NỔI TRỐNG HỘI thì tự dồn trống (boost).
+   Chạy khi âm thanh đã mở khoá VÀ music_enabled; giọng đọc cất lên thì
+   nhạc tự nhỏ xuống 30% (ducking), đọc xong lại to như cũ. */
 const music = {
   enabled: true, volume: 50, playing: false, ducked: false,
   ctx: null, bus: null, timer: null, nextTime: 0, step: 0,
@@ -163,6 +166,17 @@ const music = {
     72, 76, 79, 84, 79, 76, 72, 0,  // C
   ],
   BASS_ROOTS: [48, 43, 45, 41, 48, 43, 41, 48], // C G Am F C G F C (MIDI)
+  // ---- bản "trống hội" riêng cho Kéo Co (soạn gốc, ngũ cung C) ----
+  track: "default", boost: false,
+  TUG_STEP_DUR: 60 / 126 / 2, // 1 nốt móc đơn ở 126 BPM
+  // 2 ô nhịp x 16 nốt móc đơn (số MIDI, 0 = nghỉ) — giai điệu ngũ cung C D E G A
+  TUG_MELODY: [
+    76, 0, 79, 0, 81, 79, 76, 74, 76, 0, 79, 81, 84, 81, 79, 76,
+    74, 0, 76, 0, 79, 76, 74, 72, 74, 76, 79, 0, 76, 74, 72, 0,
+  ],
+  TUG_BASS_ROOTS: [48, 43, 41, 48], // theo ô nhịp 16 nốt: C G F C (MIDI)
+  _stepDur() { return this.track === "tug" ? this.TUG_STEP_DUR : this.STEP_DUR; },
+  _trackLen() { return this.track === "tug" ? this.TUG_MELODY.length : this.MELODY.length; },
   _freq(midi) { return 440 * Math.pow(2, (midi - 69) / 12); },
   _level() { return (this.volume / 100) * 0.24 * (this.ducked ? 0.3 : 1); },
   _applyGain() {
@@ -191,9 +205,9 @@ const music = {
     flt.type = "lowpass"; flt.frequency.value = 2600;
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + this.STEP_DUR * 0.95);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + this._stepDur() * 0.95);
     osc.connect(flt); flt.connect(g); g.connect(this.bus);
-    osc.start(t); osc.stop(t + this.STEP_DUR + 0.05);
+    osc.start(t); osc.stop(t + this._stepDur() + 0.05);
   },
   _bass(midi, t, vol) {
     const ctx = this.ctx;
@@ -203,7 +217,7 @@ const music = {
     osc.type = "square";
     osc.frequency.value = this._freq(midi);
     flt.type = "lowpass"; flt.frequency.value = 480;
-    const dur = this.STEP_DUR * 1.9;
+    const dur = this._stepDur() * 1.9;
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.015);
     g.gain.setValueAtTime(vol, t + dur * 0.6);
@@ -223,7 +237,66 @@ const music = {
     src.connect(bp); bp.connect(g); g.connect(this.bus);
     src.start(t); src.stop(t + 0.07);
   },
+  _bigDrum(t, vol) { // trống cái: sine tụt pitch 160 -> 52 Hz, nảy như mặt trống
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(160, t);
+    osc.frequency.exponentialRampToValueAtTime(52, t + 0.11);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+    osc.connect(g); g.connect(this.bus);
+    osc.start(t); osc.stop(t + 0.26);
+  },
+  _clack(t, vol) { // phách gỗ: noise burst rất ngắn qua bandpass ~1900 Hz
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass"; bp.frequency.value = 1900; bp.Q.value = 1.1;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+    src.connect(bp); bp.connect(g); g.connect(this.bus);
+    src.start(t); src.stop(t + 0.06);
+  },
+  _flute(midi, t, vol) { // hơi sáo trúc: sine + vibrato nhẹ, nốt ngân dài
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    const vib = ctx.createOscillator();
+    const vibG = ctx.createGain();
+    const g = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = this._freq(midi);
+    vib.frequency.value = 5.2;
+    vibG.gain.value = this._freq(midi) * 0.006;
+    vib.connect(vibG); vibG.connect(osc.frequency);
+    const dur = this.TUG_STEP_DUR * 1.8;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.05);
+    g.gain.setValueAtTime(vol * 0.8, t + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(this.bus);
+    osc.start(t); osc.stop(t + dur + 0.05);
+    vib.start(t); vib.stop(t + dur + 0.05);
+  },
+  _scheduleTugStep(step, t) {
+    const mel = this.TUG_MELODY[step % this.TUG_MELODY.length];
+    if (mel) this._flute(mel, t, 0.30);
+    const bar = Math.floor(step / 16) % this.TUG_BASS_ROOTS.length, inBar = step % 16;
+    if (inBar % 4 === 0) this._bigDrum(t, 0.85);       // trống cái vào mỗi phách
+    else if (inBar % 4 === 2) this._bigDrum(t, 0.38);  // điểm nhẹ giữa phách
+    if (inBar % 2 === 1) this._clack(t, 0.15);         // phách gỗ lệch phách
+    if (inBar === 0) this._bass(this.TUG_BASS_ROOTS[bar], t, 0.26);
+    if (inBar === 8) this._bass(this.TUG_BASS_ROOTS[bar] + 7, t, 0.18);
+    if (this.boost) { // NỔI TRỐNG HỘI: dồn trống dày hơn hẳn
+      if (inBar % 2 === 0) this._bigDrum(t + this.TUG_STEP_DUR / 2, 0.30);
+      if (inBar % 4 === 3) this._clack(t, 0.22);
+    }
+  },
   _scheduleStep(step, t) {
+    if (this.track === "tug") { this._scheduleTugStep(step, t); return; }
     const mel = this.MELODY[step];
     if (mel) this._pluck(mel, t, 0.5);
     const bar = Math.floor(step / 8), inBar = step % 8;
@@ -246,8 +319,8 @@ const music = {
       if (!this.playing) return;
       while (this.nextTime < this.ctx.currentTime + 0.28) {
         this._scheduleStep(this.step, this.nextTime);
-        this.step = (this.step + 1) % this.MELODY.length;
-        this.nextTime += this.STEP_DUR;
+        this.step = (this.step + 1) % this._trackLen();
+        this.nextTime += this._stepDur();
       }
     }, 90);
   },
@@ -265,12 +338,26 @@ const music = {
     this.volume = Math.max(0, Math.min(100, Number(v) || 0));
     this._applyGain();
   },
+  setTrack(name) { // "tug" -> bản trống hội; còn lại -> bản mặc định
+    const t = name === "tug" ? "tug" : "default";
+    if (t === this.track) return;
+    this.track = t;
+    this.step = 0;
+    if (this.playing && this.ctx) this.nextTime = this.ctx.currentTime + 0.06;
+  },
+  setBoost(b) { this.boost = !!b; },
 };
 // ducking: giọng đọc đang phát thì nhạc lùi về 30%
 setInterval(() => {
   const d = !!tts.speaking;
   if (d !== music.ducked) { music.ducked = d; music._applyGain(); }
 }, 150);
+
+// Kéo Co: lúc NỔI TRỐNG HỘI (drums_until còn hạn) thì bản trống hội dồn trống
+setInterval(() => {
+  const b = stageMode === "tug" && !!tugState && tugState.drums_until > Date.now() / 1000;
+  if (b !== music.boost) music.setBoost(b);
+}, 400);
 
 /* ================= cổng âm thanh: tự mở khoá, không cần bấm nút =================
    Trình duyệt chặn autoplay có tiếng cho tới khi có tương tác — nên sân khấu
@@ -351,6 +438,7 @@ const BOSS_BAR_HP = 250;           // mỗi thanh máu trên HUD = 250 HP (khớ
 function setStageMode(mode) {
   if (mode !== "run" && mode !== "boss" && mode !== "garden" && mode !== "miner" && mode !== "tug") return;
   stageMode = mode;
+  music.setTrack(mode); // Kéo Co dùng bản trống hội, các mode khác bản mặc định
   $("stage").classList.toggle("boss-mode", mode === "boss");
   $("stage").classList.toggle("garden-mode", mode === "garden");
   $("stage").classList.toggle("miner-mode", mode === "miner");
